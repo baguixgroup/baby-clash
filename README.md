@@ -1,0 +1,189 @@
+# Baby Clash
+
+A family-friendly party brawler for 1–2 players. Two cartoon babies fight over the nursery by flinging their
+**diapers** and whatever **toys** drop into the playpen. Every hit fills the other baby's **Cry Meter**; at 100% they
+burst into tears and lose the round. First to two rounds wins.
+
+The twist: your diaper is your **armour** *and* your best weapon. Wear it and hits hurt 3× less. Throw it and you're
+exposed until someone (maybe your opponent) picks it back up.
+
+Everything you see and hear (characters, nursery, UI art, icons, music, sound effects) is generated from code
+inside this project. There are no third-party assets and no licensing to worry about.
+
+---
+
+## Requirements
+
+- **Unity 6.6 (6000.6.3f1)**, the version this project was last opened and verified with. Other Unity 6 versions
+  with URP 17.x should work.
+- Packages (resolved automatically): Universal Render Pipeline 17.6, Input System 1.20, uGUI, Test Framework.
+- macOS or Windows. Keyboard, and any standard gamepad (Xbox, DualShock/DualSense, Switch Pro…).
+
+## Open and play
+
+1. Unity Hub → **Add project from disk** → this folder → open with Unity 6.6.
+2. If Unity asks to enable the new Input System backends, click **Yes** (the editor restarts).
+3. On first open (and whenever the generated content is out of date) the editor **builds all game content
+   automatically**: render pipeline, textures, sculpted characters, props, prefabs, HUD icons and the Arena scene.
+   It takes about 1–3 minutes. Watch for `[Baby Clash] Generated game content` in the Console.
+4. Press **Play**. The title screen runs a CPU-vs-CPU demo in the background.
+
+Menu **Baby Clash**:
+- **Rebuild Game Content**: regenerate everything. Balance assets are kept.
+- **Open Arena Scene**.
+- **Capture Screenshots**: renders the arena and character close-ups to `Screenshots/`.
+- **Build macOS App / Build Windows App**: see *Building* below.
+
+## Controls
+
+| | Move | Grab / Throw | Dash |
+|---|---|---|---|
+| **Baby 1** | W A S D | Space | Left Shift |
+| **Baby 2** | Arrow keys | Enter (or Right Ctrl) | Right Shift (or /) |
+| **Gamepad** (1st pad → Baby 1, 2nd → Baby 2) | Left stick / D-pad | A / Cross | B / Circle (or X / Square, R1) |
+
+- **Pause**: Esc, P or Start.
+- **Menus**: arrows/WASD or stick to move, Enter/Space/A to confirm, Esc/B to go back. The mouse works too.
+- In **1 Player** mode the human baby can use either half of the keyboard.
+- `F1` toggles the debug overlay (editor and development builds).
+
+### The one button
+
+**Grab / Throw** does the sensible thing:
+1. No diaper on, and a loose diaper within reach → put it on (armour first).
+2. Holding a toy → throw the toy.
+3. A toy within reach → pick it up (it balances on your head).
+4. Otherwise → rip off your diaper and throw it.
+
+**Dash** is a belly slide. Thrown items pass straight through you during the first moment of a dash, and if you slide
+into the other baby you **shove** them: a little Cry, a big push, and their toy flies loose.
+
+## Game modes
+
+- **1 Player**: you (Baby 1) vs a CPU baby. Choose **Easy** (nap time), **Normal** (cranky) or **Hard** (teething).
+  The CPU plays by exactly the same rules through the same controls: it fetches diapers, grabs toys, leads its
+  throws on Hard, dodges with dashes, and shoves when it's close.
+- **2 Players**: local versus on one keyboard, two gamepads, or a mix.
+- Matches are **best of 3** rounds with a **75-second** clock. When time runs out, the calmer baby (lower Cry) wins.
+
+## Architecture
+
+```
+Assets/BabyClash/
+  Scripts/Core/            BabyClash.Core: pure C# rules, no UnityEngine, unit tested
+    CryMeter, HitResolver       damage, knockback and stun from attack x defence (diaper on/off)
+    BabyStatus                  Ready / Throwing / Dashing / Stunned / Crying, cooldowns, dodge window
+    ItemStatus                  Loose / Held / Flying ownership, thrower immunity, one hit per throw
+    RoundStateMachine           countdown -> play (clock) -> result
+    MatchStateMachine, RoundRules   best-of-N, time-up decision
+  Scripts/Runtime/         BabyClash.Runtime: MonoBehaviours
+    Baby/        BabyController (hub), BabyMovement (run/dash/knockback), BabyDiaperSlot, BabyHands,
+                 BabyAnimator (procedural animation), BabyFace (expressions)
+    Items/       Throwable (projectile base), Diaper, Toy, ToySpawner (pooled toy drops)
+    AI/          BabyBrain (CPU player)
+    Input/       BabyInputHandler (Input System, per-player keyboard half + gamepad slot)
+    Round/       RoundManager (rounds, matches, resets)
+    Arena/       ArenaBounds (returns escaped items and babies)
+    Camera/      ArenaCamera (framing, zoom, shake)
+    Audio/       AudioDirector, SoundBank + Synth (procedural music and SFX), GameSettings
+    Feedback/    ImpactFeedback (particles, shake, hit-stop, slow-mo, sounds), TimeController
+    UI/          GameFlow (menus/pause/results), StartupWarmup (loading screen), HUDController, BabyHudPanel,
+                 MenuButtonFx, TitleLogo, DebugOverlay, CommandLineSmokeTest + SmokeTestProfiler (build QA)
+    Config/      BabyConfig, ThrowableConfig -> DiaperConfig / ToyConfig, MatchConfig, CpuConfig
+  Shaders/Toon.shader      URP cel shader: two-tone ramp, real shadows, SSAO, rim light, accent colour, outlines
+  Editor/                  content pipeline (runs in the editor, produces normal Unity assets)
+    Meshing/     SDF sculpting (smooth-blended shapes + surface nets), analytic shapes, MeshBuilder
+    Art/         BabyFactory, ItemFactory, RoomFactory, UiFactory, TextureFactory, MaterialFactory,
+                 IconBaker, RenderSetup (URP + post-processing)
+    BabyClashContentBuilder, BabyClashAutoSetup, BabyClashRelease, ScreenshotCapture
+  Input/BabyClashControls.inputactions
+  Tests/EditMode (rules)   Tests/PlayMode (physics, gameplay, CPU, showcase capture)
+  (generated) Balance/  Generated/  Prefabs/  Scenes/
+```
+
+Principles:
+- **Gameplay never references input, visuals, UI or audio.** `BabyController` exposes `SetMoveInput`, `PressAction`
+  and `PressDash`, plus events. The keyboard/gamepad handler and the CPU brain are interchangeable drivers, and
+  animation, HUD and feedback only listen.
+- **Physics:** thrown items ignore babies' bodies (`Physics.IgnoreCollision`). Hits come from a trigger, pickups from an
+  overlap query. So items never get stuck in babies, shoved around, or clip their thrower.
+- **Persistent diapers:** exactly two exist, forever. Toys come from a fixed pool (no runtime instantiation).
+- **Characters** are one smooth skinned mesh per body, sculpted from blended signed-distance shapes with painted
+  vertex colours: skin, blush, a shirt that takes the player colour, a white collar. Faces (eyes, brows, three
+  mouths), hair and effects are separate parts. Animation is procedural, so a hand-made model and Animator can
+  replace `Visual/` later without touching gameplay.
+
+## Balance
+
+All in `Assets/BabyClash/Balance/`. Edit them in the Inspector, even during Play Mode.
+
+| Asset | Highlights (defaults) |
+|---|---|
+| **BabyConfig** | move 5.5 m/s · dash 11 m/s, 0.3 s, 0.9 s cooldown, 0.2 s dodge window · shove 6 Cry / 8 m/s · protected defence Cry ×0.5, knockback ×0.6 · diaperless Cry ×1.5, knockback ×1.4 · Max Diapers 1 (2 = carry a spare) · aim assist 25° |
+| **DiaperConfig** | 15 m/s throw, arc 3.5 · direct hit 16 Cry / 8 m/s · bounce hit 10 / 5 · soft landing 0.35 |
+| **ToyBlock / ToyDuck / ToyBottle** | block 12 Cry heavy-ish · duck 8 Cry, fast, bouncy, squeaks · bottle 14 Cry lob, heaviest push · vanish 2.5 s after landing · spawn weights |
+| **MatchConfig** | best of 3 · 2.4 s countdown · 75 s clock · first toy after 3 s, then every 3.5–6.5 s, max 3 in play |
+| **CpuConfig** | per difficulty: reaction time, aim error, dodge chance, diaper-throw willingness, shove chance, speed |
+
+Feel knobs live on scene components: `Main Camera → ArenaCamera` (framing/shake), `Game → ImpactFeedback`
+(particles, hit-stop, slow-mo), `Game → AudioDirector` (mix), `Baby prefab → Visual → BabyAnimator` (motion).
+
+## Tests
+
+**Window → General → Test Runner**:
+- **EditMode, 48 tests**: Cry Meter, damage/knockback, item ownership (throw → hit once → land → opponent picks
+  up the same item → throws it back), dash and dodge windows, stun, crying, rounds, the round clock, best-of-3,
+  time-up decisions.
+- **PlayMode, 18 tests** with real physics: babies start protected; throwing removes protection and the diaper
+  lands; it hits the opponent; diaperless babies re-equip and throw back; a wearing baby can't grab a second diaper;
+  toys are grabbed without losing the diaper, hit, and vanish; dashing dodges throws; dashing into a baby shoves it
+  and knocks its toy loose; diaper-before-toy priority; knockouts end rounds and the next round resets everything;
+  first to two wins the match; time-up goes to the calmest baby; escaped items and babies return; the CPU hits,
+  re-equips its diaper, and stops when the round is over.
+- **ShowcaseCapture** (explicit, run it on purpose) plays the real scene through its menus with two CPUs and saves
+  screenshots, including close-ups of animations.
+
+## Building
+
+- In the editor: **Baby Clash → Build macOS App** (universal Intel + Apple Silicon) or **Build Windows App**
+  (needs the Windows Build Support module from Unity Hub). Output goes to `Builds/`.
+- Command line:
+  `Unity -batchmode -quit -projectPath . -executeMethod BabyClash.EditorTools.BabyClashRelease.BuildMacOS -buildPath "Builds/macOS/Baby Clash.app"`
+- Smoke test a build: `"Baby Clash.app/Contents/MacOS/Baby Clash" -smoketest /some/folder` plays a CPU-vs-CPU match on
+  its own, saves screenshots and a log to the folder, then quits. The log includes frame rate, CPU/GPU frame times,
+  garbage collections and every frame slower than 250 ms. Extra flags:
+  - `-perfTest` switches off SSAO, MSAA, resolution and shadows one step at a time and logs the cost of each.
+  - `-profileMarkers` (needs a development build: add `-development` to the build command line) logs the most
+    expensive engine and script profiler markers, overall and for each slow frame.
+  - The window must stay visible: macOS stops presenting frames for a hidden window or a sleeping display, and the
+    player waits for it.
+- **Windows installer**: after **Build Windows App**, run `Installer/build-installer.sh`. It packages
+  `Builds/Windows` into `Builds/Installer/BabyClash-<version>-Setup.exe`, a setup wizard (Welcome → install folder →
+  Finish with "Play now" and "Create a desktop shortcut") that installs to `Program Files`, adds a Start menu entry and
+  registers an uninstaller under Settings → Apps. The version comes from **Player Settings → Version**. Needs Docker:
+  the script runs NSIS and ImageMagick (which draws the wizard art from the generated icons) in a container, so it
+  works from macOS. The script and the NSIS source are in `Installer/`.
+- **Raspberry Pi Web build**: install Unity's Web Build Support module, then run
+  `Unity -batchmode -quit -projectPath . -buildTarget WebGL -executeMethod BabyClash.EditorTools.BabyClashRelease.BuildRaspberryPi`.
+  Copy `Installer/play-on-pi.py` into `Builds/RaspberryPi/` and transfer that folder to the Pi. On the Pi desktop,
+  open a terminal in the folder and run `python3 play-on-pi.py`. Keep the terminal open while Chromium runs.
+  The launcher serves the game on localhost. To run the automated match, add `?smoketest=1` to its URL and
+  open Chromium's developer console for the results.
+- At startup a short **loading screen** draws every toy, effect and font size once so shaders compile up front
+  (`StartupWarmup`). On an older Intel Mac this takes several seconds; afterwards there are no compile stalls.
+- Burst ahead-of-time compilation is off for macOS (`ProjectSettings/BurstAotSettings_StandaloneOSX.json`). The game
+  has no Burst code of its own, and the Unity 6.6 Intel-Mac editor ships its `llvm-lipo` tool without the executable
+  bit, which breaks universal builds. To turn Burst back on, run
+  `chmod +x "<Unity.app>/Contents/Resources/Burst/Client/bcl/hostmac/llvm-lipo"` and tick **Project Settings → Burst
+  AOT Settings → Enable Burst Compilation** for macOS.
+
+## Known limitations
+
+- One arena. Babies differ only in looks (no character traits yet).
+- The UI font is Unity's built-in one. A rounder, playful font (e.g. an OFL-licensed one) would suit the game
+  better and is a one-line swap in `UiFactory`.
+- No online play, rebinding screen, localisation, save data beyond volume settings, or achievements.
+- Gamepads are assigned by connection order.
+- The scene and prefabs are generated: hand edits to them are lost on **Rebuild Game Content**. Balance assets are
+  safe. To hand-author content, stop regenerating (or change the factories).
+- The Intel-Mac Unity editor is deprecated by Unity after 6.7 LTS; building still produces universal apps.

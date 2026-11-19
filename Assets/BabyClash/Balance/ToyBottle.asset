@@ -1,0 +1,34 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0534e933882254dfc8dfc6793b3bfcfe, type: 3}
+  m_Name: ToyBottle
+  m_EditorClassIdentifier: BabyClash.Runtime::BabyClash.ToyConfig
+  throwSpeed: 14
+  throwArc: 4.5
+  gravityMultiplier: 1.8
+  spinSpeed: 700
+  spinStyle: 1
+  directHitCry: 14
+  bounceHitCry: 9
+  directHitKnockback: 9
+  bounceHitKnockback: 5
+  minImpactStrength: 0.4
+  reboundHorizontalFactor: 0.2
+  reboundUpSpeed: 3
+  landingSpeedRetention: 0.35
+  settleSpeed: 1.2
+  maxFlightTime: 3
+  displayName: Baby Bottle
+  impactSound: 2
+  despawnAfterLanding: 2.5
+  idleLifetime: 16
+  spawnWeight: 0.7
