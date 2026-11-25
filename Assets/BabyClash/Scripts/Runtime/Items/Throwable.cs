@@ -220,8 +220,17 @@ namespace BabyClash
             Rigidbody otherBody = other.attachedRigidbody;
             if (otherBody == null || !otherBody.TryGetComponent(out BabyController baby) || baby.IsCrying)
                 return;
+            // No friendly fire.
+            if (Thrower != null && Thrower.IsAlly(baby))
+                return;
             // A dodging baby lets the throw sail through, and it stays live for anyone behind.
-            if (baby.IsDodging || !Status.TryRegisterHit(baby.PlayerIndex, out bool isDirect))
+            if (baby.IsDodging)
+            {
+                if (baby != Thrower && baby.IsActiveInRound)
+                    baby.NotifyDodged();
+                return;
+            }
+            if (!Status.TryRegisterHit(baby.PlayerIndex, out bool isDirect))
                 return;
 
             ThrowableConfig settings = Settings;
@@ -236,7 +245,7 @@ namespace BabyClash
                 isDirect ? settings.directHitCry : settings.bounceHitCry,
                 isDirect ? settings.directHitKnockback : settings.bounceHitKnockback,
                 strength);
-            if (baby.ReceiveHit(request, direction, other.ClosestPoint(body.position), isDirect))
+            if (baby.ReceiveHit(request, direction, other.ClosestPoint(body.position), isDirect, Thrower))
                 HitBaby?.Invoke(this, baby, isDirect);
 
             // Pop off the victim and drop nearby so they (or the thrower) can go for it.

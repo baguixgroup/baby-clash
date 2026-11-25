@@ -65,7 +65,7 @@ namespace BabyClash
             if (roundManager == null)
                 return;
             roundManager.PhaseChanged += HandlePhaseChanged;
-            foreach (BabyController baby in roundManager.Babies)
+            foreach (BabyController baby in roundManager.AllBabies)
             {
                 if (baby == null)
                     continue;
@@ -96,7 +96,7 @@ namespace BabyClash
             if (roundManager == null)
                 return;
             roundManager.PhaseChanged -= HandlePhaseChanged;
-            foreach (BabyController baby in roundManager.Babies)
+            foreach (BabyController baby in roundManager.AllBabies)
             {
                 if (baby == null)
                     continue;

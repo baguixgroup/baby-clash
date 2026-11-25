@@ -42,6 +42,24 @@ namespace BabyClash
         float barShake;
         Vector2 cryBarRest;
         RectTransform cryBar;
+        bool scoring;
+        bool simple;
+        int shownScore = -1;
+
+        /// <summary>Score modes show points after the name; toddler mode drops everything but the points.</summary>
+        public void SetRules(bool usesScore, bool toddler)
+        {
+            scoring = usesScore;
+            simple = toddler;
+            shownScore = -1;
+            cryLabel.enabled = !toddler;
+            diaperLabel.enabled = !toddler;
+            if (diaperIcon != null)
+                diaperIcon.enabled = !toddler;
+            if (baby != null)
+                nameLabel.text = baby.DisplayName;
+            RefreshPips();
+        }
 
         /// <summary>Prefab wiring (editor tooling).</summary>
         public void Configure(Text babyName, Image face, Image faceRing, RectTransform fill, Image fillImage, Text cry,
@@ -109,7 +127,7 @@ namespace BabyClash
             int needed = round != null ? round.RoundsToWin : winPips.Length;
             for (int i = 0; i < winPips.Length; i++)
             {
-                winPips[i].gameObject.SetActive(i < needed);
+                winPips[i].gameObject.SetActive(i < needed && !scoring);
                 winPips[i].color = i < wins ? (baby != null ? baby.PlayerColor : Color.white) : pipEmptyColor;
             }
         }
@@ -118,6 +136,16 @@ namespace BabyClash
         {
             if (baby == null)
                 return;
+
+            if (scoring && round != null)
+            {
+                int score = Mathf.FloorToInt(round.GetScore(baby));
+                if (score != shownScore)
+                {
+                    shownScore = score;
+                    nameLabel.text = simple ? score.ToString() : $"{baby.DisplayName}   {score}";
+                }
+            }
 
             float target = baby.Cry.Normalized;
             // Rise quickly on hits, drop instantly on reset.
@@ -179,6 +207,8 @@ namespace BabyClash
         void HandleRoundReset(BabyController _)
         {
             barShake = 0f;
+            if (baby != null)
+                HandleDiapersChanged(baby.Diapers);
             RefreshPips();
         }
     }

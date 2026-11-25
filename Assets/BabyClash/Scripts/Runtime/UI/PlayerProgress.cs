@@ -9,6 +9,17 @@ namespace BabyClash
         const string SaveKey = "BabyClash.Profile";
         static PlayerProfile profile;
 
+        /// <summary>Automated runs: use a throwaway profile and never touch the player's save.</summary>
+        public static void UseThrowawayProfile(int rattles)
+        {
+            throwaway = true;
+            profile = new PlayerProfile { rattles = rattles };
+            profile.Normalize();
+            RefreshChallenges(profile);
+        }
+
+        static bool throwaway;
+
         public static PlayerProfile Profile
         {
             get
@@ -33,6 +44,8 @@ namespace BabyClash
 
         public static void Save()
         {
+            if (throwaway)
+                return;
             PlayerPrefs.SetString(SaveKey, JsonUtility.ToJson(Profile));
             PlayerPrefs.Save();
         }
@@ -66,12 +79,7 @@ namespace BabyClash
 
         static void RefreshChallenges(PlayerProfile current)
         {
-            ChallengeBook.Refresh(current, DateTime.Today, definition =>
-                definition.Stat != ChallengeStat.Dodges &&
-                definition.Stat != ChallengeStat.PowerUps &&
-                definition.Stat != ChallengeStat.Giggles &&
-                definition.Stat != ChallengeStat.SurvivalWave &&
-                definition.Stat != ChallengeStat.BottleSeconds);
+            ChallengeBook.Refresh(current, DateTime.Today);
         }
     }
 }

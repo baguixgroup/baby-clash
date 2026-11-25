@@ -63,6 +63,11 @@ namespace BabyClash
             arenaCenter = center;
         }
 
+        public void SetTargets(Transform[] followTargets) => targets = followTargets;
+
+        /// <summary>Frames one subject up close from the front, off-centre to the left (wardrobe). Null = normal play.</summary>
+        public Transform CloseUp { get; set; }
+
         /// <summary>Adds shake trauma (0..1). Shake strength grows with trauma squared, so small hits stay subtle.</summary>
         public void Shake(float amount) => trauma = Mathf.Clamp01(trauma + Mathf.Max(0f, amount));
 
@@ -75,6 +80,15 @@ namespace BabyClash
 
         void LateUpdate()
         {
+            if (CloseUp != null)
+            {
+                Vector3 look = CloseUp.position + Vector3.up * 0.75f;
+                Vector3 goal = look + CloseUp.forward * 4.2f + Vector3.up * 0.9f;
+                Quaternion turn = Quaternion.LookRotation(look - goal) * Quaternion.Euler(0f, 13f, 0f);
+                float blend = 1f - Mathf.Exp(-6f * Time.unscaledDeltaTime);
+                transform.SetPositionAndRotation(Vector3.Lerp(transform.position, goal, blend), Quaternion.Slerp(transform.rotation, turn, blend));
+                return;
+            }
             ComputeGoal(out Vector3 goalFocus, out float goalDistance);
             focus = Vector3.SmoothDamp(focus, goalFocus, ref focusVelocity, smoothTime);
             distance = Mathf.SmoothDamp(distance, goalDistance, ref distanceVelocity, smoothTime);
@@ -107,7 +121,7 @@ namespace BabyClash
             int count = 0;
             foreach (Transform target in targets)
             {
-                if (target == null)
+                if (target == null || !target.gameObject.activeInHierarchy)
                     continue;
                 min = Vector3.Min(min, target.position);
                 max = Vector3.Max(max, target.position);

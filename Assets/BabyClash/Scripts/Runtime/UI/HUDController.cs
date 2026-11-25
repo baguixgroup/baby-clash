@@ -39,6 +39,56 @@ namespace BabyClash
         float popTimer;
         float hintTimer;
         bool visible = true;
+        MatchSetup rules;
+        SurvivalDirector survival;
+        int shownWave = -1;
+
+        /// <summary>Adds cards for players 3 and 4 along the bottom.</summary>
+        public void Expand(BabyController[] cast, SurvivalDirector director)
+        {
+            survival = director;
+            director.WaveStarted += wave =>
+            {
+                ShowBanner($"WAVE {wave}!", string.Empty, new Color(1f, 0.9f, 0.35f));
+                goMessageTimer = goMessageDuration;
+            };
+            if (panels.Length >= cast.Length || panels.Length < 2)
+                return;
+            var all = new BabyHudPanel[cast.Length];
+            for (int i = 0; i < all.Length; i++)
+            {
+                if (i < panels.Length)
+                {
+                    all[i] = panels[i];
+                    continue;
+                }
+                all[i] = Instantiate(panels[i % 2], panels[i % 2].transform.parent);
+                var card = (RectTransform)all[i].transform;
+                float x = i % 2 == 0 ? 0f : 1f;
+                card.anchorMin = card.anchorMax = card.pivot = new Vector2(x, 0f);
+                card.anchoredPosition = new Vector2(card.anchoredPosition.x, 20f);
+                card.SetSiblingIndex(0);
+            }
+            panels = all;
+            for (int i = 0; i < panels.Length; i++)
+                panels[i].Bind(cast[i], roundManager, portraits.Length > 0 ? portraits[i % portraits.Length] : null);
+        }
+
+        /// <summary>Shows the cards and texts a match needs.</summary>
+        public void SetRules(MatchSetup setup)
+        {
+            rules = setup;
+            shownWave = -1;
+            shownSeconds = -1;
+            int playing = setup.Count(false);
+            for (int i = 0; i < panels.Length; i++)
+            {
+                bool shown = setup.IsPlaying(i) && (setup.Mode != GameMode.Survival || setup.IsHuman(i));
+                panels[i].gameObject.SetActive(shown);
+                panels[i].transform.localScale = Vector3.one * (playing > 2 ? 0.72f : 1f);
+                panels[i].SetRules(setup.UsesScore, setup.IsToddler);
+            }
+        }
 
         /// <summary>Scene wiring (editor tooling).</summary>
         public void Configure(RoundManager round, CanvasGroup canvasGroup, BabyHudPanel[] babyPanels, Sprite[] faces,
@@ -120,7 +170,7 @@ namespace BabyClash
                     if (step != shownCountdown)
                     {
                         shownCountdown = step;
-                        ShowBanner(step.ToString(), $"ROUND {roundManager.RoundNumber}", Color.white);
+                        ShowBanner(step.ToString(), StartLine(), Color.white);
                     }
                     break;
                 case RoundPhase.Playing when goMessageTimer > 0f:
@@ -131,7 +181,12 @@ namespace BabyClash
             }
 
             if (timerPill != null)
-                timerPill.SetActive(roundManager.HasTimeLimit && !roundManager.IsEndless);
+                timerPill.SetActive((roundManager.HasTimeLimit || roundManager.Mode == GameMode.Survival) && !roundManager.IsEndless);
+            if (roundManager.Mode == GameMode.Survival && survival != null && timerLabel != null && survival.Wave != shownWave)
+            {
+                shownWave = survival.Wave;
+                timerLabel.text = $"W{shownWave}";
+            }
             if (roundManager.HasTimeLimit && timerLabel != null && roundManager.Phase != RoundPhase.RoundOver)
             {
                 int seconds = Mathf.CeilToInt(roundManager.TimeRemaining);
@@ -180,6 +235,27 @@ namespace BabyClash
                     BabyController winner = roundManager.RoundWinner;
                     string title = winner != null ? $"{winner.DisplayName} WINS THE ROUND!" : "IT'S A TIE!";
                     string detail = roundManager.RoundEndedOnTime ? "TIME'S UP! Calmest baby wins." : LoserLine();
+                    if (rules != null && rules.IsToddler)
+                    {
+                        title = "HOORAY!";
+                        detail = string.Empty;
+                        winner = null;
+                    }
+                    else if (rules != null && rules.Mode == GameMode.Survival)
+                    {
+                        title = "NAP TIME!";
+                        detail = $"You reached wave {survival.Wave}";
+                        winner = null;
+                    }
+                    else if (rules != null && rules.UsesScore)
+                    {
+                        title = winner != null ? $"{winner.DisplayName} WINS!" : "IT'S A TIE!";
+                        detail = roundManager.RoundEndedOnTime ? "TIME'S UP!" : string.Empty;
+                    }
+                    else if (rules != null && rules.Teams && winner != null)
+                    {
+                        title = winner.PlayerIndex % 2 == 0 ? "TEAM 1+3 WINS THE ROUND!" : "TEAM 2+4 WINS THE ROUND!";
+                    }
                     ShowBanner(title, detail, winner != null ? winner.PlayerColor : Color.white);
                     foreach (BabyHudPanel panel in panels)
                         panel.RefreshPips();
@@ -188,6 +264,13 @@ namespace BabyClash
                     HideBanner();
                     break;
             }
+        }
+
+        string StartLine()
+        {
+            if (rules == null || rules.Eliminates)
+                return $"ROUND {roundManager.RoundNumber}";
+            return rules.IsToddler ? string.Empty : GameMenus.ModeName(rules.Mode);
         }
 
         string LoserLine()

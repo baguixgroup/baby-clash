@@ -31,6 +31,9 @@ namespace BabyClash
         float speedMultiplier = 1f;
         Vector3 facing = Vector3.forward;
 
+        /// <summary>1 = normal floor, lower = slippery (slower to speed up, stop and turn). Set by rooms.</summary>
+        public float Grip { get; set; } = 1f;
+
         /// <summary>Normalized horizontal facing direction. Throws go this way (plus aim assist).</summary>
         public Vector3 Facing => facing;
         public Vector3 Velocity => body != null ? body.linearVelocity : Vector3.zero;
@@ -91,6 +94,13 @@ namespace BabyClash
             body.linearVelocity = new Vector3(horizontalVelocity.x, Mathf.Max(v.y, lift), horizontalVelocity.z);
         }
 
+        /// <summary>Pushes the baby along the floor (sprinklers, vacuums) on top of whatever it is doing.</summary>
+        public void Push(Vector3 velocityChange)
+        {
+            velocityChange.y = 0f;
+            body.linearVelocity += velocityChange;
+        }
+
         public void FaceInstantly(Vector3 direction)
         {
             direction.y = 0f;
@@ -131,7 +141,7 @@ namespace BabyClash
             {
                 case MovementMode.Free:
                     target = input * (config.moveSpeed * speedMultiplier);
-                    rate = steering ? config.acceleration : config.deceleration;
+                    rate = (steering ? config.acceleration : config.deceleration) * Grip;
                     break;
                 case MovementMode.Dashing:
                     rate = config.dashDeceleration;
