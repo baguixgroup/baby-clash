@@ -54,6 +54,25 @@ namespace BabyClash
         }
 
         /// <summary>Round reset: the toy spawner clears every toy right after.</summary>
+        /// <summary>Online guests: the host says this baby holds it.</summary>
+        public void ShowHeld(Toy toy)
+        {
+            if (toy == null || held == toy)
+                return;
+            held = toy;
+            toy.ForceHold(owner, Socket, Vector3.zero, Vector3.one);
+            Changed?.Invoke(this);
+        }
+
+        /// <summary>Online guests: the host says it's no longer in this baby's hands.</summary>
+        public void ShowReleased(Toy toy)
+        {
+            if (held != toy || toy == null)
+                return;
+            held = null;
+            Changed?.Invoke(this);
+        }
+
         public void ForgetHeld()
         {
             if (held == null)

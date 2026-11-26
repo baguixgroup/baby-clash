@@ -71,6 +71,9 @@ namespace BabyClash
 
         public void SetRunning(bool value) => running = value;
 
+        /// <summary>Online guests: a toy dropped in on the host.</summary>
+        public void ShowRemoteSpawn(Toy toy) => Spawned?.Invoke(toy);
+
         /// <summary>Drops a specific toy at a spot right away (tests, tutorials).</summary>
         public void SpawnAt(Toy toy, Vector3 groundPosition)
         {

@@ -44,6 +44,62 @@ namespace BabyClash
         public BabyController Thrower { get; private set; }
 
         public Rigidbody Body => body;
+
+        /// <summary>Online guests: the host moves this item; it only follows <see cref="ShowRemote"/>.</summary>
+        public bool IsPuppet { get; private set; }
+
+        public void SetPuppet(bool puppet)
+        {
+            IsPuppet = puppet;
+            if (body != null && Holder == null)
+                SetPhysicsActive(true);
+        }
+
+        /// <summary>Online guests: shows the host's state for this item.</summary>
+        public void ShowRemote(ItemState state, BabyController holder, BabyController thrower, Vector3 position, Quaternion rotation)
+        {
+            if (state == ItemState.Held && holder != null)
+            {
+                if (Holder != holder)
+                {
+                    ReleaseFromHolder();
+                    if (this is Diaper diaper)
+                        holder.Diapers.ShowWorn(diaper);
+                    else if (this is Toy toy)
+                        holder.Hands.ShowHeld(toy);
+                }
+                Status.SetMirrored(ItemState.Held, holder.PlayerIndex, ItemStatus.Nobody);
+                return;
+            }
+            if (Holder != null)
+            {
+                ReleaseFromHolder();
+                Holder = null;
+                Detach(position, rotation);
+            }
+            Thrower = state == ItemState.Flying ? thrower : null;
+            Status.SetMirrored(state, ItemStatus.Nobody, thrower != null ? thrower.PlayerIndex : ItemStatus.Nobody);
+            transform.SetPositionAndRotation(position, rotation);
+            if (trail != null && trail.emitting != (state == ItemState.Flying))
+                SetTrail(state == ItemState.Flying);
+        }
+
+        void ReleaseFromHolder()
+        {
+            if (Holder == null)
+                return;
+            if (this is Diaper diaper)
+                Holder.Diapers.ShowRemoved(diaper);
+            else if (this is Toy toy)
+                Holder.Hands.ShowReleased(toy);
+        }
+
+        /// <summary>Online guests: replays a hit this item made on the host.</summary>
+        public void ShowRemoteHit(BabyController thrower, BabyController victim, bool direct)
+        {
+            Thrower = thrower;
+            HitBaby?.Invoke(this, victim, direct);
+        }
         public abstract ThrowableConfig Settings { get; }
 
         public event Action<Throwable> Launched;
@@ -109,7 +165,7 @@ namespace BabyClash
         /// <summary>Throw. The thrower has already let go of it (see BabyDiaperSlot / BabyHands).</summary>
         public bool Launch(BabyController thrower, Vector3 origin, Vector3 direction, float strength)
         {
-            if (thrower == null || !Status.TryThrow(thrower.PlayerIndex))
+            if (IsPuppet || thrower == null || !Status.TryThrow(thrower.PlayerIndex))
                 return false;
 
             direction.y = 0f;
@@ -132,6 +188,8 @@ namespace BabyClash
         /// <summary>Knocked out of a baby's hands: becomes a loose item with the given velocity.</summary>
         public void Drop(Vector3 position, Vector3 velocity)
         {
+            if (IsPuppet)
+                return;
             Status.MakeLoose();
             Holder = null;
             Thrower = null;
@@ -145,6 +203,8 @@ namespace BabyClash
         /// <summary>Puts an escaped item back into play as a loose item. Same object, no duplicates.</summary>
         public void RecoverTo(Vector3 position)
         {
+            if (IsPuppet)
+                return;
             PlaceLoose(position);
             Recovered?.Invoke(this);
         }
@@ -152,6 +212,8 @@ namespace BabyClash
         /// <summary>Places the item, at rest and loose, at a position (spawning, recovering).</summary>
         protected void PlaceLoose(Vector3 position)
         {
+            if (IsPuppet)
+                return;
             Status.MakeLoose();
             Holder = null;
             Thrower = null;
@@ -174,7 +236,7 @@ namespace BabyClash
 
         void FixedUpdate()
         {
-            if (Status.State != ItemState.Flying)
+            if (IsPuppet || Status.State != ItemState.Flying)
                 return;
 
             ThrowableConfig settings = Settings;
@@ -189,7 +251,7 @@ namespace BabyClash
 
         void OnCollisionEnter(Collision collision)
         {
-            if (Status.State != ItemState.Flying)
+            if (IsPuppet || Status.State != ItemState.Flying)
                 return;
 
             // Soft items: hitting the floor kills most horizontal speed instead of skidding across the arena.
@@ -214,7 +276,7 @@ namespace BabyClash
 
         void OnTriggerEnter(Collider other)
         {
-            if (!Status.IsDangerous)
+            if (IsPuppet || !Status.IsDangerous)
                 return;
 
             Rigidbody otherBody = other.attachedRigidbody;
@@ -289,7 +351,19 @@ namespace BabyClash
 
         void SetPhysicsActive(bool active)
         {
-            if (active)
+            if (active && IsPuppet)
+            {
+                // Puppets are placed by the host's snapshots, never by physics.
+                if (!body.isKinematic)
+                {
+                    body.linearVelocity = Vector3.zero;
+                    body.angularVelocity = Vector3.zero;
+                }
+                body.isKinematic = true;
+                body.detectCollisions = false;
+                body.interpolation = RigidbodyInterpolation.None;
+            }
+            else if (active)
             {
                 body.isKinematic = false;
                 body.detectCollisions = true;

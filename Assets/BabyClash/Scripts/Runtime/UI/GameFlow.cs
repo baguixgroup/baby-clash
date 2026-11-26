@@ -87,6 +87,9 @@ namespace BabyClash
             Story,
             Wardrobe,
             Challenges,
+            Online,
+            JoinCode,
+            Room,
         }
 
         [SerializeField] RoundManager roundManager;
@@ -131,6 +134,11 @@ namespace BabyClash
         SurvivalDirector survival;
         TouchControls touch;
         ArenaCamera arenaCamera;
+        NetGame net;
+        OnlineMenus online;
+        BabyLook[] onlineLooks;
+        bool guestMatch;
+        bool wasRunningInBackground;
         readonly Image[] resultStars = new Image[3];
         int roundsLost;
         float matchSeconds;
@@ -189,13 +197,30 @@ namespace BabyClash
             options.back.onClick.AddListener(CloseOptions);
 
             pause.resume.onClick.AddListener(Resume);
-            pause.restart.onClick.AddListener(() => StartMatch(setup));
+            pause.restart.onClick.AddListener(() =>
+            {
+                if (NetRole.IsOnline)
+                    net.HostStartMatch();
+                else
+                    StartMatch(setup);
+            });
             pause.options.onClick.AddListener(() => OpenOptions(Screen.Paused));
-            pause.mainMenu.onClick.AddListener(ShowTitle);
+            pause.mainMenu.onClick.AddListener(() =>
+            {
+                if (NetRole.IsOnline)
+                    LeaveOnlineMatch();
+                else
+                    ShowTitle();
+            });
 
             results.rematch.onClick.AddListener(Rematch);
             results.mainMenu.onClick.AddListener(() =>
             {
+                if (NetRole.IsOnline)
+                {
+                    LeaveOnlineMatch();
+                    return;
+                }
                 bool story = setup.Level != null;
                 ShowTitle();
                 if (story)
@@ -325,7 +350,7 @@ namespace BabyClash
         {
             // The player freezes while in the background; come back to the pause menu, not mid-fight.
             // Not in the editor, where clicking the Inspector to tune balance would pause the game.
-            if (!focus && IsReady && screen == Screen.Match && !Application.isEditor && !Application.runInBackground)
+            if (!focus && IsReady && screen == Screen.Match && !Application.isEditor && !Application.runInBackground && !NetRole.IsOnline)
                 Pause();
         }
 
@@ -342,8 +367,11 @@ namespace BabyClash
             }
             else if (CancelPressed())
             {
-                if (screen == Screen.Wardrobe || screen == Screen.Party || screen == Screen.Story || screen == Screen.Challenges)
+                if (screen == Screen.Wardrobe || screen == Screen.Party || screen == Screen.Story || screen == Screen.Challenges
+                    || (screen == Screen.Online && !NetSession.Instance.IsBusy))
                     BackToTitle();
+                else if (screen == Screen.JoinCode && !NetSession.Instance.IsBusy)
+                    Show(Screen.Online);
                 else if (screen == Screen.Difficulty || screen == Screen.HowToPlay)
                     Show(Screen.Title);
                 else if (screen == Screen.Options)
@@ -352,6 +380,7 @@ namespace BabyClash
 
             if (screen == Screen.Story)
                 menus.UpdateStoryDetail();
+            online.UpdateMatch(screen == Screen.Match);
             if (screen == Screen.Match && roundManager.Phase == RoundPhase.Playing)
             {
                 matchSeconds += Time.deltaTime;
@@ -374,6 +403,8 @@ namespace BabyClash
 
         public void ShowTitle()
         {
+            guestMatch = false;
+            onlineLooks = null;
             StopTrackingProgress();
             if (title.challenges == null)
                 CreateChallengePanel();
@@ -446,7 +477,8 @@ namespace BabyClash
             }
             roundManager.StartMatch(setup);
             hud.SetVisible(true);
-            if (!setup.IsToddler)
+            // The control hints describe local players' keys; online each screen has a single player.
+            if (!setup.IsToddler && !NetRole.IsOnline)
                 hud.ShowHints();
             audioDirector.PlayMusic(MusicId.Match);
             audioDirector.DuckMusic(false);
@@ -455,8 +487,14 @@ namespace BabyClash
 
         void Pause()
         {
-            timeController.SetPaused(true);
-            audioDirector.DuckMusic(true);
+            // Online matches keep going for everyone else: the menu just floats over the action.
+            if (!NetRole.IsOnline)
+            {
+                timeController.SetPaused(true);
+                audioDirector.DuckMusic(true);
+            }
+            pause.restart.gameObject.SetActive(!NetRole.IsGuest);
+            MenuKit.SetText(pause.mainMenu, NetRole.IsHost ? "BACK TO ROOM" : NetRole.IsGuest ? "LEAVE ROOM" : "MAIN MENU");
             Show(Screen.Paused);
         }
 
@@ -509,6 +547,19 @@ namespace BabyClash
             hud.Expand(cast, survival);
             touch = TouchControls.Create(kit);
 
+            net = NetGame.Create(this, roundManager, powerUps, bottle, survival, audioDirector);
+            online = new OnlineMenus(kit, title.root.transform.parent, net, NetSession.Instance, BackToTitle,
+                () => Show(Screen.JoinCode), () => OpenOnline(null));
+            NetSession.Instance.Started += mode =>
+            {
+                wasRunningInBackground = Application.runInBackground;
+                // The host keeps the match going even when its window isn't focused.
+                Application.runInBackground = true;
+                online.RefreshRoom();
+                Show(Screen.Room);
+            };
+            NetSmokeTest.CreateIfRequested(this, net, roundManager);
+
             menus = new GameMenus(kit, title.root.transform.parent, StartMatch, BackToTitle);
             menus.WardrobeChanged += ShowWardrobeBaby;
             BuildTitleButtons();
@@ -530,6 +581,67 @@ namespace BabyClash
                 () => StartMatch(MatchSetup.Tots(Gamepad.all.Count > 0 ? 2 : 1))), -1, 4);
             PlaceTitleButton(kit.Button("Wardrobe", column, "WARDROBE", MenuKit.Pink, Vector2.zero, new Vector2(440f, 90f), 38, OpenWardrobe), 1, 0);
             PlaceTitleButton(kit.Button("ChallengeList", column, "CHALLENGES", MenuKit.Blue, Vector2.zero, new Vector2(440f, 90f), 38, OpenChallenges), 1, 1);
+            Button onlineButton = kit.Button("Online", column, "PLAY ONLINE", MenuKit.Pink, Vector2.zero, new Vector2(904f, 90f), 40, () => OpenOnline(null));
+            PlaceTitleButton(onlineButton, 0, 5);
+        }
+
+        public void OpenOnline(string message)
+        {
+            online.OpenOnline(message);
+            Show(Screen.Online);
+        }
+
+        // ------------------------------------------------------------ online (see NetGame)
+
+        /// <summary>Starts an online match on this screen: the real one on the host, a mirror of it on guests.</summary>
+        public void StartOnlineMatch(MatchSetup matchSetup, BabyLook[] looks)
+        {
+            onlineLooks = looks;
+            guestMatch = NetRole.IsGuest;
+            StartMatch(matchSetup);
+        }
+
+        /// <summary>Host: a guest left mid-match; a CPU takes over their baby.</summary>
+        public void OnlinePlayerLeft(int slot)
+        {
+            if (slot < 0 || slot >= brains.Length || screen == Screen.Title)
+                return;
+            if (setup != null && slot < setup.Slots.Length)
+                setup.Slots[slot] = SlotDriver.CpuNormal;
+            humanInputs[slot].enabled = false;
+            brains[slot].Difficulty = CpuDifficulty.Normal;
+            brains[slot].Gentle = setup != null && setup.IsToddler;
+            brains[slot].enabled = roundManager.AllBabies[slot].gameObject.activeSelf;
+        }
+
+        /// <summary>Back to the room screen (host chose it, or a guest was told by the host).</summary>
+        public void OnlineBackToRoom()
+        {
+            ShowTitle();
+            online.RefreshRoom();
+            Show(Screen.Room);
+        }
+
+        /// <summary>The online game ended (left, kicked, connection lost).</summary>
+        public void OnlineEnded(string reason)
+        {
+            Application.runInBackground = wasRunningInBackground;
+            ShowTitle();
+            if (!string.IsNullOrEmpty(reason))
+                OpenOnline(reason);
+        }
+
+        void LeaveOnlineMatch()
+        {
+            if (NetRole.IsHost)
+            {
+                net.HostBackToRoom();
+                OnlineBackToRoom();
+            }
+            else
+            {
+                net.Leave();
+            }
         }
 
         static void PlaceTitleButton(Button button, int side, int row)
@@ -594,6 +706,12 @@ namespace BabyClash
 
         void Rematch()
         {
+            if (NetRole.IsOnline)
+            {
+                if (NetRole.IsHost)
+                    net.HostStartMatch();
+                return;
+            }
             LevelDef level = setup.Level;
             int next = level != null ? LevelCatalog.IndexOf(level.Id) + 1 : 0;
             if (level != null && levelCleared && next < LevelCatalog.All.Count)
@@ -607,9 +725,29 @@ namespace BabyClash
         /// <summary>Room, controllers, outfits and mode objects for a match.</summary>
         void ApplySetup(MatchSetup next)
         {
+            // Online guests only mirror the host's match: no physics, rules or CPUs of their own.
+            bool mirror = guestMatch && NetRole.IsGuest;
+            roundManager.SetMirror(mirror);
+            foreach (BabyController baby in roundManager.AllBabies)
+                baby.SetPuppet(mirror);
+            foreach (Diaper diaper in roundManager.Diapers)
+                diaper.SetPuppet(mirror);
+            if (roundManager.Toys != null)
+            {
+                foreach (Toy toy in roundManager.Toys.Pool)
+                    toy.SetPuppet(mirror);
+            }
+
             rooms.Show(next.Room);
             bottle.gameObject.SetActive(next.Mode == GameMode.KingOfTheBottle);
-            touch.Playing = !next.Endless && next.IsHuman(0);
+            int localSlot = -1;
+            for (int i = 0; i < next.Slots.Length && localSlot < 0; i++)
+            {
+                if (next.IsHuman(i))
+                    localSlot = i;
+            }
+            touch.Playing = !next.Endless && localSlot >= 0;
+            touch.Slot = Mathf.Max(0, localSlot);
             touch.Simple = next.IsToddler;
             hud.SetRules(next);
 
@@ -619,8 +757,11 @@ namespace BabyClash
                 bool isHuman = next.IsHuman(i);
                 BabyController baby = roundManager.AllBabies[i];
                 BabyLook look = PlayerProgress.Profile.LookFor(i);
-                // Rivals dress up too, differently every time.
-                OutfitRig.On(baby).Wear(isHuman || !next.IsPlaying(i) || next.Endless ? look : RandomLook());
+                // Rivals dress up too, differently every time. Online, the host decides everyone's outfit.
+                if (onlineLooks != null && i < onlineLooks.Length && onlineLooks[i] != null)
+                    OutfitRig.On(baby).Wear(isHuman ? PlayerProgress.Profile.LookFor(0) : onlineLooks[i]);
+                else
+                    OutfitRig.On(baby).Wear(isHuman || !next.IsPlaying(i) || next.Endless ? look : RandomLook());
                 if (isHuman)
                 {
                     string scheme = human == 0 ? BabyInputHandler.KeyboardLeftScheme : human == 1 ? BabyInputHandler.KeyboardRightScheme : null;
@@ -634,18 +775,19 @@ namespace BabyClash
                 humanInputs[i].SetSoloKeyboard(isHuman && humans == 1);
                 brains[i].Difficulty = next.Level != null && next.BossSlot == i ? CpuDifficulty.Hard : MatchSetup.DifficultyOf(next.Slots[i]);
                 brains[i].Gentle = next.IsToddler;
-                brains[i].enabled = !isHuman && next.IsPlaying(i);
+                brains[i].enabled = !mirror && next.IsCpu(i);
                 if (!isHuman)
                     baby.SpeedScale = 1f;
 
                 if (!baby.TryGetComponent(out TotsHelper helper))
                     helper = baby.gameObject.AddComponent<TotsHelper>();
-                helper.enabled = isHuman && next.IsToddler;
-                helper.AnyKey = humans == 1;
+                // The host also helps online toddlers pick things up (their screens only mirror the match).
+                helper.enabled = next.IsToddler && (isHuman || (!mirror && next.IsOnline(i)));
+                helper.AnyKey = isHuman && humans == 1;
             }
         }
 
-        static BabyLook RandomLook()
+        internal static BabyLook RandomLook()
         {
             var look = new BabyLook();
             foreach (CosmeticSlot slot in new[] { CosmeticSlot.Hat, CosmeticSlot.Face })
@@ -694,12 +836,22 @@ namespace BabyClash
             results.detail.rectTransform.sizeDelta = new Vector2(1000f, 240f);
             results.detail.rectTransform.anchoredPosition = new Vector2(0f, -260f);
             BabyController winner = matchWinner;
+            if (NetRole.IsOnline)
+            {
+                results.rematch.interactable = NetRole.IsHost;
+                MenuKit.SetText(results.mainMenu, NetRole.IsHost ? "BACK TO ROOM" : "LEAVE ROOM");
+            }
+            else
+            {
+                results.rematch.interactable = true;
+            }
             results.title.text = ResultTitle(winner);
             results.title.color = setup.IsToddler || setup.Mode == GameMode.Survival ? MenuKit.Pink : winner != null ? winner.PlayerColor : MenuKit.Ink;
             ShowResultStars();
             bool nextLevel = setup.Level != null && levelCleared && LevelCatalog.IndexOf(setup.Level.Id) + 1 < LevelCatalog.All.Count;
-            MenuKit.SetText(results.rematch, nextLevel ? "NEXT LEVEL" : setup.Level != null && !levelCleared ? "TRY AGAIN" : "REMATCH");
-            MenuKit.SetText(results.mainMenu, setup.Level != null ? "LEVELS" : "MAIN MENU");
+            MenuKit.SetText(results.rematch, NetRole.IsGuest ? "HOST PICKS NEXT" : nextLevel ? "NEXT LEVEL" : setup.Level != null && !levelCleared ? "TRY AGAIN" : "REMATCH");
+            if (!NetRole.IsOnline)
+                MenuKit.SetText(results.mainMenu, setup.Level != null ? "LEVELS" : "MAIN MENU");
 
             string score = ScoreLine();
             string flavour;
@@ -709,6 +861,8 @@ namespace BabyClash
                 flavour = GoalLines();
             else if (setup.Mode == GameMode.Survival)
                 flavour = $"Best: wave {PlayerProgress.Profile.bestSurvivalWave}";
+            else if (NetRole.IsOnline && winner != null)
+                flavour = HumanWon() ? "You win! What a champ!" : "So close! Rematch?";
             else if (!soloGame || winner == null)
                 flavour = "What a tantrum!";
             else if (HumanWon())
@@ -823,6 +977,13 @@ namespace BabyClash
                 menus.WardrobeScreen.SetActive(next == Screen.Wardrobe);
                 menus.ChallengesScreen.SetActive(next == Screen.Challenges);
             }
+            if (online != null)
+            {
+                online.OnlineScreen.SetActive(next == Screen.Online);
+                online.CodeScreen.SetActive(next == Screen.JoinCode);
+                online.RoomScreen.SetActive(next == Screen.Room);
+                online.SetTyping(next == Screen.JoinCode);
+            }
 
             EventSystem events = EventSystem.current;
             if (events != null)
@@ -846,6 +1007,9 @@ namespace BabyClash
                 case Screen.Story: return menus.StoryFirst;
                 case Screen.Wardrobe: return menus.WardrobeFirst;
                 case Screen.Challenges: return menus.ChallengesFirst;
+                case Screen.Online: return online.OnlineFirst;
+                case Screen.JoinCode: return online.CodeFirst;
+                case Screen.Room: return online.RoomFirst;
                 default: return null;
             }
         }

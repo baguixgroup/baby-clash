@@ -5,6 +5,59 @@ using UnityEngine;
 
 namespace BabyClash
 {
+    /// <summary>Everything a guest's screen needs to show the host's match (round phase, clock, scores).</summary>
+    public sealed class RoundMirror
+    {
+        public const int MaxSides = MatchSetup.MaxPlayers;
+
+        public RoundPhase Phase = RoundPhase.Restarting;
+        public int RoundNumber;
+        public float CountdownRemaining;
+        public float CountdownDuration;
+        public float TimeRemaining;
+        public bool HasTimeLimit;
+        public bool EndedOnTime;
+        public bool MatchOver;
+        public bool Endless;
+        public int WinnerSide = RoundStateMachine.NoPlayer;
+        public int LoserIndex = RoundStateMachine.NoPlayer;
+        public int MatchWinnerSide = MatchStateMachine.NoPlayer;
+        public int RoundsToWin;
+        public readonly int[] Wins = new int[MaxSides];
+        public readonly float[] Scores = new float[MaxSides];
+
+        public void CopyFrom(RoundMirror other)
+        {
+            Phase = other.Phase;
+            RoundNumber = other.RoundNumber;
+            CountdownRemaining = other.CountdownRemaining;
+            CountdownDuration = other.CountdownDuration;
+            TimeRemaining = other.TimeRemaining;
+            HasTimeLimit = other.HasTimeLimit;
+            EndedOnTime = other.EndedOnTime;
+            MatchOver = other.MatchOver;
+            Endless = other.Endless;
+            WinnerSide = other.WinnerSide;
+            LoserIndex = other.LoserIndex;
+            MatchWinnerSide = other.MatchWinnerSide;
+            RoundsToWin = other.RoundsToWin;
+            Array.Copy(other.Wins, Wins, MaxSides);
+            Array.Copy(other.Scores, Scores, MaxSides);
+        }
+
+        public void Clear()
+        {
+            Phase = RoundPhase.Restarting;
+            RoundNumber = 0;
+            CountdownRemaining = CountdownDuration = TimeRemaining = 0f;
+            HasTimeLimit = EndedOnTime = MatchOver = Endless = false;
+            WinnerSide = LoserIndex = MatchWinnerSide = RoundStateMachine.NoPlayer;
+            RoundsToWin = 0;
+            Array.Clear(Wins, 0, MaxSides);
+            Array.Clear(Scores, 0, MaxSides);
+        }
+    }
+
     /// <summary>
     /// Runs matches: rounds with countdown, time limit and result, resets babies/diapers/toys between rounds, and
     /// tallies round wins (first to N wins the match). Knows nothing about UI or input; menus drive it through
@@ -44,6 +97,16 @@ namespace BabyClash
         readonly List<BabyController> reviveScratch = new List<BabyController>(4);
         bool running;
         bool drawnMatch;
+        readonly RoundMirror mirror = new RoundMirror();
+
+        /// <summary>Online guests: the host runs the rounds, this only shows them (see <see cref="ShowMirrored"/>).</summary>
+        public bool IsMirror { get; private set; }
+
+        public void SetMirror(bool on)
+        {
+            IsMirror = on;
+            mirror.Clear();
+        }
 
         const float ReviveDelay = 2.6f;
 
@@ -59,25 +122,25 @@ namespace BabyClash
         public bool UsesScore => setup != null && setup.UsesScore;
         public ScoreBoard Scores => scores;
         public Transform SpawnOf(BabyController baby) => SpawnFor(Array.IndexOf(babies, baby), baby);
-        public int WinningSide => round != null ? round.WinnerIndex : RoundStateMachine.NoPlayer;
-        public int MatchWinningSide => match != null ? match.WinnerIndex : MatchStateMachine.NoPlayer;
+        public int WinningSide => IsMirror ? mirror.WinnerSide : round != null ? round.WinnerIndex : RoundStateMachine.NoPlayer;
+        public int MatchWinningSide => IsMirror ? mirror.MatchWinnerSide : match != null ? match.WinnerIndex : MatchStateMachine.NoPlayer;
         public IReadOnlyList<Diaper> Diapers => diapers;
         public ToySpawner Toys => toys;
         public MatchConfig Config => config;
         public bool IsRunning => running;
-        public bool IsEndless => match != null && match.IsEndless;
-        public int RoundsToWin => match != null ? match.RoundsToWin : 0;
-        public RoundPhase Phase => round != null ? round.Phase : RoundPhase.Restarting;
-        public int RoundNumber => round != null ? round.RoundNumber : 0;
-        public float CountdownRemaining => round != null ? round.CountdownRemaining : 0f;
-        public float CountdownDuration => round != null ? round.CountdownDuration : 0f;
-        public bool HasTimeLimit => round != null && round.HasTimeLimit;
-        public float TimeRemaining => round != null ? round.TimeRemaining : 0f;
-        public bool RoundEndedOnTime => round != null && round.EndedOnTime;
-        public BabyController RoundWinner => FirstOnSide(round != null ? round.WinnerIndex : RoundStateMachine.NoPlayer);
-        public BabyController RoundLoser => BabyAt(round != null ? round.LoserIndex : RoundStateMachine.NoPlayer);
-        public bool IsMatchOver => drawnMatch || (match != null && match.IsOver);
-        public BabyController MatchWinner => FirstOnSide(match != null ? match.WinnerIndex : MatchStateMachine.NoPlayer);
+        public bool IsEndless => IsMirror ? mirror.Endless : match != null && match.IsEndless;
+        public int RoundsToWin => IsMirror ? mirror.RoundsToWin : match != null ? match.RoundsToWin : 0;
+        public RoundPhase Phase => IsMirror ? mirror.Phase : round != null ? round.Phase : RoundPhase.Restarting;
+        public int RoundNumber => IsMirror ? mirror.RoundNumber : round != null ? round.RoundNumber : 0;
+        public float CountdownRemaining => IsMirror ? mirror.CountdownRemaining : round != null ? round.CountdownRemaining : 0f;
+        public float CountdownDuration => IsMirror ? mirror.CountdownDuration : round != null ? round.CountdownDuration : 0f;
+        public bool HasTimeLimit => IsMirror ? mirror.HasTimeLimit : round != null && round.HasTimeLimit;
+        public float TimeRemaining => IsMirror ? mirror.TimeRemaining : round != null ? round.TimeRemaining : 0f;
+        public bool RoundEndedOnTime => IsMirror ? mirror.EndedOnTime : round != null && round.EndedOnTime;
+        public BabyController RoundWinner => FirstOnSide(WinningSide);
+        public BabyController RoundLoser => BabyAt(IsMirror ? mirror.LoserIndex : round != null ? round.LoserIndex : RoundStateMachine.NoPlayer);
+        public bool IsMatchOver => IsMirror ? mirror.MatchOver : drawnMatch || (match != null && match.IsOver);
+        public BabyController MatchWinner => FirstOnSide(MatchWinningSide);
 
         public event Action<RoundPhase> PhaseChanged;
         public event Action MatchStarted;
@@ -98,7 +161,13 @@ namespace BabyClash
             autoStart = startAutomatically;
         }
 
-        public int GetWins(BabyController baby) => match != null ? match.GetWins(SideOf(baby)) : 0;
+        public int GetWins(BabyController baby)
+        {
+            int side = SideOf(baby);
+            if (IsMirror)
+                return side >= 0 && side < RoundMirror.MaxSides ? mirror.Wins[side] : 0;
+            return match != null ? match.GetWins(side) : 0;
+        }
 
         public int SideOf(BabyController baby)
         {
@@ -106,16 +175,83 @@ namespace BabyClash
             return index >= 0 && index < sides.Length ? sides[index] : index;
         }
 
-        public float GetScore(BabyController baby) => scores != null ? scores.Get(SideOf(baby)) : 0f;
+        public float GetScore(BabyController baby)
+        {
+            int side = SideOf(baby);
+            if (IsMirror)
+                return side >= 0 && side < RoundMirror.MaxSides ? mirror.Scores[side] : 0f;
+            return scores != null ? scores.Get(side) : 0f;
+        }
+
+        /// <summary>Host: the match state to send to online guests.</summary>
+        public void ExportMirror(RoundMirror into)
+        {
+            into.Phase = Phase;
+            into.RoundNumber = RoundNumber;
+            into.CountdownRemaining = CountdownRemaining;
+            into.CountdownDuration = CountdownDuration;
+            into.TimeRemaining = TimeRemaining;
+            into.HasTimeLimit = HasTimeLimit;
+            into.EndedOnTime = RoundEndedOnTime;
+            into.MatchOver = IsMatchOver;
+            into.Endless = IsEndless;
+            into.WinnerSide = WinningSide;
+            into.LoserIndex = round != null ? round.LoserIndex : RoundStateMachine.NoPlayer;
+            into.MatchWinnerSide = MatchWinningSide;
+            into.RoundsToWin = RoundsToWin;
+            for (int side = 0; side < RoundMirror.MaxSides; side++)
+            {
+                into.Wins[side] = match != null ? match.GetWins(side) : 0;
+                into.Scores[side] = scores != null ? scores.Get(side) : 0f;
+            }
+        }
+
+        /// <summary>Online guests: shows the host's match state, raising the same events a local match would.</summary>
+        public void ShowMirrored(RoundMirror state)
+        {
+            if (!IsMirror || !running)
+                return;
+            RoundPhase old = mirror.Phase;
+            int oldRound = mirror.RoundNumber;
+            bool wasOver = mirror.MatchOver;
+            mirror.CopyFrom(state);
+            if (state.Phase != old || state.RoundNumber != oldRound)
+            {
+                // Snapshots can skip the instant Restarting phase (and short ones); listeners rely on them.
+                bool newRound = state.RoundNumber != oldRound || old == RoundPhase.RoundOver;
+                if (newRound && state.Phase != RoundPhase.Restarting && state.Phase != RoundPhase.RoundOver)
+                {
+                    RaiseMirroredPhase(RoundPhase.Restarting, state);
+                    if (state.Phase == RoundPhase.Playing)
+                        RaiseMirroredPhase(RoundPhase.Starting, state);
+                }
+                RaiseMirroredPhase(state.Phase, state);
+            }
+            if (state.MatchOver && !wasOver)
+                MatchEnded?.Invoke(MatchWinner);
+        }
+
+        void RaiseMirroredPhase(RoundPhase phase, RoundMirror state)
+        {
+            mirror.Phase = phase;
+            PhaseChanged?.Invoke(phase);
+            mirror.Phase = state.Phase;
+        }
 
         public void AddScore(BabyController baby, float amount)
         {
+            if (IsMirror)
+                return;
             if (baby != null && scores != null && Phase == RoundPhase.Playing)
                 scores.Add(SideOf(baby), amount);
         }
 
         /// <summary>Ends the running round now (modes with their own ending).</summary>
-        public void FinishRound(int winningSide, bool onTime = false) => round.EndRound(winningSide, onTime);
+        public void FinishRound(int winningSide, bool onTime = false)
+        {
+            if (!IsMirror)
+                round.EndRound(winningSide, onTime);
+        }
 
         /// <summary>Replaces the full cast (extra players created at load). Call while no match is running.</summary>
         public void SetRoster(BabyController[] allBabies, Transform[] spawns, Diaper[] allDiapers)
@@ -241,6 +377,15 @@ namespace BabyClash
                 baby.CryTakenScale = boss ? 0.6f : setup.IsToddler ? 13f : horde ? 2.6f : setup.Mode == GameMode.Survival ? 0.7f : 1f;
                 baby.transform.localScale = Vector3.one * (boss ? 1.45f : 1f);
             }
+            if (IsMirror)
+            {
+                running = true;
+                drawnMatch = false;
+                reviveTimers.Clear();
+                mirror.Clear();
+                MatchStarted?.Invoke();
+                return;
+            }
             Begin();
         }
 
@@ -274,7 +419,7 @@ namespace BabyClash
 
         void Update()
         {
-            if (!running)
+            if (!running || IsMirror)
                 return;
 
             round.Tick(Time.deltaTime);
@@ -343,6 +488,8 @@ namespace BabyClash
         void HandleBabyStartedCrying(BabyController baby)
         {
             BabyCried?.Invoke(baby);
+            if (IsMirror)
+                return;
             if (setup == null || setup.Eliminates)
                 round.ReportCrying(IndexOf(baby));
             else if (setup.Mode == GameMode.KingOfTheBottle && round.Phase == RoundPhase.Playing)

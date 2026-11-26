@@ -112,6 +112,15 @@ namespace BabyClash.Core
             SetState(ItemState.Loose);
         }
 
+        /// <summary>Online guests: shows the host's state for this item (no rules applied).</summary>
+        public void SetMirrored(ItemState state, int holderId, int throwerId)
+        {
+            HolderId = state == ItemState.Held ? holderId : Nobody;
+            ThrowerId = state == ItemState.Flying ? throwerId : Nobody;
+            HasHit = state != ItemState.Flying;
+            SetState(state);
+        }
+
         void SetHeld(int babyId)
         {
             HolderId = babyId;

@@ -4,6 +4,30 @@ using UnityEngine;
 
 namespace BabyClash
 {
+    /// <summary>Where a puppet baby's own controls go (online guests send them to the host).</summary>
+    public interface IBabyCommandSink
+    {
+        void Move(BabyController baby, Vector2 input);
+        void Action(BabyController baby);
+        void Dash(BabyController baby);
+    }
+
+    /// <summary>Things that happen to a baby, replayed on online guests' screens.</summary>
+    public enum BabyNetEvent : byte
+    {
+        Hit,
+        Threw,
+        PickedUp,
+        Dashed,
+        Shoved,
+        Cried,
+        Celebrated,
+        Giggled,
+        Dodged,
+        ShieldBroken,
+        RoundReset,
+    }
+
     /// <summary>
     /// Gameplay hub for one baby. Turns intents (move / action / dash) into movement, pickups, throws and shoves,
     /// and receives hits. Human input, the CPU brain, animation, HUD and feedback all talk to the baby through this
@@ -100,6 +124,71 @@ namespace BabyClash
         /// <summary>Who hurt this baby last (gets the credit when it cries).</summary>
         public BabyController LastAttacker { get; private set; }
 
+        /// <summary>
+        /// Online guests: the host plays this baby. It only shows what the host sends, and its own controls (if it's
+        /// the guest's baby) go to <see cref="CommandSink"/>.
+        /// </summary>
+        public bool IsPuppet { get; private set; }
+
+        public IBabyCommandSink CommandSink { get; set; }
+
+        public void SetPuppet(bool puppet)
+        {
+            IsPuppet = puppet;
+            movement.SetPuppet(puppet);
+            if (!puppet)
+                CommandSink = null;
+        }
+
+        /// <summary>Online guests: replays something that happened to this baby on the host.</summary>
+        public void ShowRemote(BabyNetEvent kind, BabyController other = null, Throwable item = null, BabyHitReport report = default)
+        {
+            switch (kind)
+            {
+                case BabyNetEvent.Hit:
+                    if (other != null && other != this)
+                        LastAttacker = other;
+                    HitReceived?.Invoke(this, report);
+                    break;
+                case BabyNetEvent.Threw:
+                    ThrewItem?.Invoke(this, item);
+                    break;
+                case BabyNetEvent.PickedUp:
+                    PickedUpItem?.Invoke(this, item);
+                    break;
+                case BabyNetEvent.Dashed:
+                    Dashed?.Invoke(this);
+                    break;
+                case BabyNetEvent.Shoved:
+                    if (other != null)
+                        Shoved?.Invoke(this, other);
+                    break;
+                case BabyNetEvent.Cried:
+                    if (other != null && other != this)
+                        LastAttacker = other;
+                    StartedCrying?.Invoke(this);
+                    break;
+                case BabyNetEvent.Celebrated:
+                    Celebrated?.Invoke(this);
+                    break;
+                case BabyNetEvent.Giggled:
+                    giggleTimer = GiggleDuration;
+                    Giggled?.Invoke(this, other);
+                    break;
+                case BabyNetEvent.Dodged:
+                    Dodged?.Invoke(this);
+                    break;
+                case BabyNetEvent.ShieldBroken:
+                    ShieldBroken?.Invoke(this);
+                    break;
+                case BabyNetEvent.RoundReset:
+                    giggleTimer = invulnerableTimer = 0f;
+                    LastAttacker = null;
+                    RoundReset?.Invoke(this);
+                    break;
+            }
+        }
+
         public bool IsAlly(BabyController other) => other != null && other != this && Team >= 0 && other.Team == Team;
 
         /// <summary>Raised on every action press, even when the baby can't act (menus use it to advance).</summary>
@@ -157,6 +246,11 @@ namespace BabyClash
 
         void Update()
         {
+            if (IsPuppet)
+            {
+                giggleTimer = Mathf.Max(0f, giggleTimer - Time.deltaTime);
+                return;
+            }
             Status.Tick(Time.deltaTime);
             giggleTimer = Mathf.Max(0f, giggleTimer - Time.deltaTime);
             invulnerableTimer = Mathf.Max(0f, invulnerableTimer - Time.deltaTime);
@@ -172,7 +266,13 @@ namespace BabyClash
             movement.SetMode(mode, speed);
         }
 
-        public void SetMoveInput(Vector2 input) => movement.SetMoveInput(input);
+        public void SetMoveInput(Vector2 input)
+        {
+            if (IsPuppet)
+                CommandSink?.Move(this, input);
+            else
+                movement.SetMoveInput(input);
+        }
 
         /// <summary>
         /// The one contextual button. In order: grab a diaper if you have none and one is in reach; throw the toy
@@ -183,6 +283,11 @@ namespace BabyClash
             // Sampled first: a press that advances a menu must not also throw in the fresh round.
             bool couldAct = activeInRound;
             ActionPressed?.Invoke(this);
+            if (IsPuppet)
+            {
+                CommandSink?.Action(this);
+                return;
+            }
             if (!couldAct)
                 return;
 
@@ -200,7 +305,7 @@ namespace BabyClash
         /// <summary>Picks up the closest diaper (if there's room) or else toy within reach.</summary>
         public bool TryPickUp(bool diapersOnly = false)
         {
-            if (!activeInRound || !Status.CanAct)
+            if (IsPuppet || !activeInRound || !Status.CanAct)
                 return false;
 
             bool wantDiaper = diapers.HasRoom;
@@ -257,7 +362,7 @@ namespace BabyClash
 
         bool Throw(Vector3? aim)
         {
-            if (!activeInRound || (!hands.IsHolding && diapers.Count == 0))
+            if (IsPuppet || !activeInRound || (!hands.IsHolding && diapers.Count == 0))
                 return false;
             if (!Status.TryBeginThrow(config.throwDuration, config.actionCooldown))
                 return false;
@@ -287,6 +392,11 @@ namespace BabyClash
         /// <summary>Belly-slide dash in the stick direction (or facing). Bumping into a baby shoves it.</summary>
         public bool PressDash()
         {
+            if (IsPuppet)
+            {
+                CommandSink?.Dash(this);
+                return false;
+            }
             if (!activeInRound || !Status.TryBeginDash(config.dashDuration, config.dashCooldown))
                 return false;
 
@@ -303,7 +413,7 @@ namespace BabyClash
         public bool ReceiveHit(in HitRequest request, Vector3 direction, Vector3 point, bool isDirectHit,
             BabyController attacker = null)
         {
-            if (IsDodging)
+            if (IsPuppet || IsDodging)
                 return false;
             if (attacker != null && attacker != this)
                 LastAttacker = attacker;
@@ -313,7 +423,7 @@ namespace BabyClash
         /// <summary>A dashing baby bumped into this one: knockback, a little Cry, and the held toy flies loose.</summary>
         public bool ReceiveShove(BabyController shover, Vector3 direction)
         {
-            if (!activeInRound || Status.IsCrying)
+            if (IsPuppet || !activeInRound || Status.IsCrying)
                 return false;
 
             LastAttacker = shover;
@@ -366,7 +476,7 @@ namespace BabyClash
         /// <summary>Holds the baby in place for a moment (bubbles).</summary>
         public bool Trap(float seconds)
         {
-            if (!activeInRound || IsDodging || invulnerableTimer > 0f || !Status.ApplyStun(seconds))
+            if (IsPuppet || !activeInRound || IsDodging || invulnerableTimer > 0f || !Status.ApplyStun(seconds))
                 return false;
             movement.ApplyKnockback(Vector3.zero, 0f);
             return true;
@@ -377,13 +487,13 @@ namespace BabyClash
         /// <summary>Cries without a full meter (lost on time). The round is already decided when this is called.</summary>
         public void BurstIntoTears()
         {
-            if (!Status.IsCrying)
+            if (!Status.IsCrying && !IsPuppet)
                 HandleCryFilled();
         }
 
         bool ApplyHit(in HitRequest request, Vector3 direction, Vector3 point, bool isDirectHit, HitSource source)
         {
-            if (!activeInRound || Status.IsCrying || invulnerableTimer > 0f || IsGiggling)
+            if (IsPuppet || !activeInRound || Status.IsCrying || invulnerableTimer > 0f || IsGiggling)
                 return false;
 
             if (ShieldHits > 0)
@@ -416,7 +526,7 @@ namespace BabyClash
 
         void TryShove(Collision collision)
         {
-            if (!Status.IsDashing || shoveUsed || !activeInRound)
+            if (IsPuppet || !Status.IsDashing || shoveUsed || !activeInRound)
                 return;
             Rigidbody otherBody = collision.rigidbody;
             if (otherBody == null || !otherBody.TryGetComponent(out BabyController victim) || victim == this || IsAlly(victim))
@@ -432,6 +542,8 @@ namespace BabyClash
 
         void HandleCryFilled()
         {
+            if (IsPuppet)
+                return;
             if (GigglesInsteadOfCrying)
             {
                 giggleTimer = GiggleDuration;

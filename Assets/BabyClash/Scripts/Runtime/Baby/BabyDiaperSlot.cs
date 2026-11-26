@@ -78,6 +78,23 @@ namespace BabyClash
         }
 
         /// <summary>Round reset: forgets worn diapers. The round manager re-equips every diaper right after.</summary>
+        /// <summary>Online guests: the host says this baby wears it.</summary>
+        public void ShowWorn(Diaper diaper)
+        {
+            if (diaper == null || held.Contains(diaper))
+                return;
+            diaper.ForceHold(owner, Socket, StackOffset(held.Count), Vector3.one);
+            held.Add(diaper);
+            Changed?.Invoke(this);
+        }
+
+        /// <summary>Online guests: the host says it's no longer worn by this baby.</summary>
+        public void ShowRemoved(Diaper diaper)
+        {
+            if (held.Remove(diaper))
+                Changed?.Invoke(this);
+        }
+
         public void ForgetAll()
         {
             held.Clear();

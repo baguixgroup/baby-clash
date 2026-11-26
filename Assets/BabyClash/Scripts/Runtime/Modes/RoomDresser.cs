@@ -411,8 +411,9 @@ namespace BabyClash
 
         void FixedUpdate()
         {
-            jets.localRotation = Quaternion.Euler(0f, Time.time * TurnSpeed, 0f);
-            if (round.Phase != RoundPhase.Playing)
+            // Guests use the host's clock so the jets point the same way on every screen.
+            jets.localRotation = Quaternion.Euler(0f, NetClock.GameTime * TurnSpeed, 0f);
+            if (round.Phase != RoundPhase.Playing || round.IsMirror)
                 return;
             foreach (BabyController baby in round.Babies)
             {
@@ -440,6 +441,17 @@ namespace BabyClash
         int target = 1;
         readonly float[] cooldowns = new float[MatchSetup.MaxPlayers];
 
+        /// <summary>The vacuum in the current room, if any (online guests place it where the host's is).</summary>
+        public static RobotVacuum Active { get; private set; }
+
+        void OnEnable() => Active = this;
+
+        void OnDisable()
+        {
+            if (Active == this)
+                Active = null;
+        }
+
         public static void Create(Transform root, RoundManager manager)
         {
             Color shell = new Color(0.95f, 0.95f, 1f), dark = new Color(0.3f, 0.3f, 0.4f);
@@ -451,6 +463,8 @@ namespace BabyClash
 
         void FixedUpdate()
         {
+            if (round.IsMirror)
+                return;
             Vector3 to = route[target] - transform.localPosition;
             float step = Speed * Time.fixedDeltaTime;
             if (to.magnitude <= step)

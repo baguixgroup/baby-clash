@@ -73,6 +73,9 @@ namespace BabyClash
 
         void OnDisable() => active.Remove(this);
 
+        /// <summary>Online guests: pickups last until the host's disappears.</summary>
+        public void KeepAlive(float seconds) => life = seconds;
+
         void Update()
         {
             life -= Time.deltaTime;
@@ -89,7 +92,7 @@ namespace BabyClash
         void OnTriggerStay(Collider other)
         {
             Rigidbody body = other.attachedRigidbody;
-            if (body == null || !body.TryGetComponent(out BabyController baby) || !baby.IsActiveInRound || baby.IsCrying)
+            if (body == null || !body.TryGetComponent(out BabyController baby) || !baby.IsActiveInRound || baby.IsCrying || baby.IsPuppet)
                 return;
             // Two babies can touch it in the same physics step; only the first one gets it.
             if (!enabled)
@@ -188,6 +191,12 @@ namespace BabyClash
         /// <summary>A baby used a power-up.</summary>
         public event Action<BabyController, PowerUpKind> Used;
 
+        /// <summary>The baby the last bubble wand trapped (null if it missed).</summary>
+        public BabyController LastBubbleTarget { get; private set; }
+
+        /// <summary>Pickups on the field (entries can be destroyed objects).</summary>
+        public IReadOnlyList<PowerUpPickup> Live => live;
+
         public void Configure(RoundManager manager, ArenaBounds bounds, AudioDirector audio)
         {
             round = manager;
@@ -220,7 +229,7 @@ namespace BabyClash
 
         void Update()
         {
-            if (round == null || !round.IsRunning || round.Phase != RoundPhase.Playing || round.Setup == null || !round.Setup.PowerUps)
+            if (round == null || round.IsMirror || !round.IsRunning || round.Phase != RoundPhase.Playing || round.Setup == null || !round.Setup.PowerUps)
                 return;
             timer -= Time.deltaTime;
             if (timer > 0f)
@@ -256,8 +265,33 @@ namespace BabyClash
             return false;
         }
 
+        /// <summary>Online guests: shows a power-up the host's baby grabbed (the effects themselves run on the host).</summary>
+        public void ShowRemoteUse(PowerUpKind kind, BabyController baby, BabyController bubbled)
+        {
+            BabyEffects effects = BabyEffects.On(baby);
+            if (kind == PowerUpKind.SippyCup)
+                effects.Boost(BoostSeconds);
+            else if (kind == PowerUpKind.Lollipop)
+                effects.Power(BoostSeconds);
+            else if (kind == PowerUpKind.BubbleWand && bubbled != null)
+                BabyEffects.On(bubbled).Bubble(BubbleSeconds);
+            effects.Say(PowerUpPickup.NameOf(kind), PowerUpPickup.ColorOf(kind));
+            if (audioDirector != null)
+                audioDirector.Play(SfxId.Cheer, 1.5f, 0.45f);
+            Used?.Invoke(baby, kind);
+        }
+
+        /// <summary>Online guests: a pickup matching one on the host (it disappears when the host's does).</summary>
+        public PowerUpPickup SpawnMirrored(PowerUpKind kind, Vector3 position)
+        {
+            PowerUpPickup pickup = Spawn(kind, position);
+            pickup.KeepAlive(float.MaxValue);
+            return pickup;
+        }
+
         public void Use(PowerUpKind kind, BabyController baby)
         {
+            LastBubbleTarget = null;
             BabyEffects effects = BabyEffects.On(baby);
             switch (kind)
             {
@@ -273,7 +307,10 @@ namespace BabyClash
                 case PowerUpKind.BubbleWand:
                     BabyController target = NearestRival(baby);
                     if (target != null && target.Trap(BubbleSeconds))
+                    {
                         BabyEffects.On(target).Bubble(BubbleSeconds);
+                        LastBubbleTarget = target;
+                    }
                     break;
                 case PowerUpKind.Teddy:
                     baby.Cry.Reduce(baby.Cry.Max * 0.35f);
