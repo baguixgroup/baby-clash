@@ -44,6 +44,10 @@ namespace BabyClash
         Collider bodyCollider;
         bool activeInRound;
         bool shoveUsed;
+        float giggleTimer;
+        float invulnerableTimer;
+        const float GiggleDuration = 1.8f;
+        const float ReviveGrace = 1.5f;
 
         public int PlayerIndex => playerIndex;
         public string DisplayName => displayName;
@@ -70,6 +74,34 @@ namespace BabyClash
         /// <summary>Scales top speed (the CPU walks slower on easy). 1 = normal.</summary>
         public float SpeedScale { get; set; } = 1f;
 
+        /// <summary>Speed multiplier from power-ups and sticky floors, on top of <see cref="SpeedScale"/>.</summary>
+        public float BoostScale { get; set; } = 1f;
+
+        /// <summary>Side in team matches; babies on the same side can't hurt each other.</summary>
+        public int Team { get; set; } = -1;
+
+        /// <summary>Scales Cry taken (the boss baby is tougher). 1 = normal.</summary>
+        public float CryTakenScale { get; set; } = 1f;
+
+        /// <summary>Scales throw speed and impact (power-ups, the boss). 1 = normal.</summary>
+        public float ThrowPower { get; set; } = 1f;
+
+        /// <summary>Toddler mode: aim assist covers every direction.</summary>
+        public bool FullAimAssist { get; set; }
+
+        /// <summary>Toddler mode: a full meter makes the baby giggle instead of cry.</summary>
+        public bool GigglesInsteadOfCrying { get; set; }
+
+        public bool IsGiggling => giggleTimer > 0f;
+
+        /// <summary>Pacifier hits left to absorb.</summary>
+        public int ShieldHits { get; set; }
+
+        /// <summary>Who hurt this baby last (gets the credit when it cries).</summary>
+        public BabyController LastAttacker { get; private set; }
+
+        public bool IsAlly(BabyController other) => other != null && other != this && Team >= 0 && other.Team == Team;
+
         /// <summary>Raised on every action press, even when the baby can't act (menus use it to advance).</summary>
         public event Action<BabyController> ActionPressed;
         public event Action<BabyController, BabyHitReport> HitReceived;
@@ -82,6 +114,11 @@ namespace BabyClash
         public event Action<BabyController> StartedCrying;
         public event Action<BabyController> RoundReset;
         public event Action<BabyController> Celebrated;
+
+        /// <summary>Toddler mode: the meter filled up and the baby is laughing (baby, who made it laugh).</summary>
+        public event Action<BabyController, BabyController> Giggled;
+        public event Action<BabyController> Dodged;
+        public event Action<BabyController> ShieldBroken;
 
         /// <summary>Scene/prefab wiring (editor tooling and tests). Call before the object is activated.</summary>
         public void Configure(BabyConfig babyConfig, int index, string babyName, Color color)
@@ -121,6 +158,8 @@ namespace BabyClash
         void Update()
         {
             Status.Tick(Time.deltaTime);
+            giggleTimer = Mathf.Max(0f, giggleTimer - Time.deltaTime);
+            invulnerableTimer = Mathf.Max(0f, invulnerableTimer - Time.deltaTime);
 
             MovementMode mode;
             if (Status.IsDashing)
@@ -129,7 +168,7 @@ namespace BabyClash
                 mode = MovementMode.Free;
             else
                 mode = MovementMode.Sliding;
-            float speed = SpeedScale * (Status.Activity == BabyActivity.Throwing ? config.throwingMoveMultiplier : 1f);
+            float speed = SpeedScale * BoostScale * (Status.Activity == BabyActivity.Throwing ? config.throwingMoveMultiplier : 1f);
             movement.SetMode(mode, speed);
         }
 
@@ -240,7 +279,7 @@ namespace BabyClash
                 origin = ClearRelease(transform.position + Vector3.up * throwReleaseHeight + direction * throwReleaseDistance, direction);
             }
 
-            item.Launch(this, origin, direction, config.throwStrength);
+            item.Launch(this, origin, direction, config.throwStrength * ThrowPower);
             ThrewItem?.Invoke(this, item);
             return true;
         }
@@ -261,10 +300,13 @@ namespace BabyClash
         }
 
         /// <summary>Applies a thrown item's hit using this baby's current defense. False if the hit was ignored.</summary>
-        public bool ReceiveHit(in HitRequest request, Vector3 direction, Vector3 point, bool isDirectHit)
+        public bool ReceiveHit(in HitRequest request, Vector3 direction, Vector3 point, bool isDirectHit,
+            BabyController attacker = null)
         {
             if (IsDodging)
                 return false;
+            if (attacker != null && attacker != this)
+                LastAttacker = attacker;
             return ApplyHit(request, direction, point, isDirectHit, HitSource.Thrown);
         }
 
@@ -274,6 +316,7 @@ namespace BabyClash
             if (!activeInRound || Status.IsCrying)
                 return false;
 
+            LastAttacker = shover;
             BabyConfig shoverConfig = shover.Config;
             direction = Flatten(direction, -movement.Facing);
             hands.DropHeld((direction + Vector3.up) * shoverConfig.shoveDropSpeed);
@@ -298,8 +341,35 @@ namespace BabyClash
             diapers.ForgetAll();
             hands.ForgetHeld();
             shoveUsed = false;
+            LastAttacker = null;
+            giggleTimer = invulnerableTimer = 0f;
+            ShieldHits = 0;
+            BoostScale = ThrowPower = 1f;
             movement.Teleport(position, rotation);
             RoundReset?.Invoke(this);
+        }
+
+        /// <summary>Back into a running round with a calm meter (modes where crying isn't the end). Keeps its diaper.</summary>
+        public void Revive(Vector3 position, Quaternion rotation)
+        {
+            Status.Reset();
+            Cry.Reset();
+            LastAttacker = null;
+            movement.Teleport(position, rotation);
+            invulnerableTimer = ReviveGrace;
+            SetActiveInRound(true);
+            RoundReset?.Invoke(this);
+        }
+
+        public void NotifyDodged() => Dodged?.Invoke(this);
+
+        /// <summary>Holds the baby in place for a moment (bubbles).</summary>
+        public bool Trap(float seconds)
+        {
+            if (!activeInRound || IsDodging || invulnerableTimer > 0f || !Status.ApplyStun(seconds))
+                return false;
+            movement.ApplyKnockback(Vector3.zero, 0f);
+            return true;
         }
 
         public void Celebrate() => Celebrated?.Invoke(this);
@@ -313,8 +383,16 @@ namespace BabyClash
 
         bool ApplyHit(in HitRequest request, Vector3 direction, Vector3 point, bool isDirectHit, HitSource source)
         {
-            if (!activeInRound || Status.IsCrying)
+            if (!activeInRound || Status.IsCrying || invulnerableTimer > 0f || IsGiggling)
                 return false;
+
+            if (ShieldHits > 0)
+            {
+                ShieldHits--;
+                movement.ApplyKnockback(Flatten(direction, -movement.Facing) * 2f, 0f);
+                ShieldBroken?.Invoke(this);
+                return false;
+            }
 
             bool wasProtected = IsProtected;
             HitOutcome outcome = HitResolver.Resolve(request, config.GetDefense(wasProtected), config.knockbackResistance);
@@ -322,7 +400,7 @@ namespace BabyClash
 
             // May fill the meter, which starts crying (see HandleCryFilled) before the knockback lands. Intended:
             // the final hit still sends the loser flying.
-            float cryAdded = Cry.Add(outcome.Cry);
+            float cryAdded = Cry.Add(outcome.Cry * CryTakenScale);
             movement.ApplyKnockback(direction * outcome.KnockbackSpeed, outcome.KnockbackSpeed * config.knockbackLift);
             if (!Status.IsCrying)
                 Status.ApplyStun(outcome.StunDuration);
@@ -341,7 +419,7 @@ namespace BabyClash
             if (!Status.IsDashing || shoveUsed || !activeInRound)
                 return;
             Rigidbody otherBody = collision.rigidbody;
-            if (otherBody == null || !otherBody.TryGetComponent(out BabyController victim) || victim == this)
+            if (otherBody == null || !otherBody.TryGetComponent(out BabyController victim) || victim == this || IsAlly(victim))
                 return;
 
             shoveUsed = true;
@@ -354,6 +432,16 @@ namespace BabyClash
 
         void HandleCryFilled()
         {
+            if (GigglesInsteadOfCrying)
+            {
+                giggleTimer = GiggleDuration;
+                Status.ApplyStun(GiggleDuration * 0.6f);
+                BabyController joker = LastAttacker;
+                // Not inside the meter's own event: it is still reporting that it's full.
+                Cry.Reset();
+                Giggled?.Invoke(this, joker);
+                return;
+            }
             Status.StartCrying();
             movement.SetMoveInput(Vector2.zero);
             hands.DropHeld(Vector3.up * CryDropSpeed);
@@ -372,12 +460,12 @@ namespace BabyClash
                 Physics.AllLayers, QueryTriggerInteraction.Ignore);
 
             Vector3 best = facing;
-            float bestAngle = config.aimAssistAngle;
+            float bestAngle = FullAimAssist ? 180f : config.aimAssistAngle;
             for (int i = 0; i < count; i++)
             {
                 Rigidbody body = aimBuffer[i].attachedRigidbody;
                 aimBuffer[i] = null;
-                if (body == null || !body.TryGetComponent(out BabyController other) || other == this || other.IsCrying)
+                if (body == null || !body.TryGetComponent(out BabyController other) || other == this || other.IsCrying || IsAlly(other))
                     continue;
 
                 Vector3 toOther = other.transform.position - origin;

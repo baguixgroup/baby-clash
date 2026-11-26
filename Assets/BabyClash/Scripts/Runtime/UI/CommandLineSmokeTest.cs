@@ -62,6 +62,8 @@ namespace BabyClash
         int hits;
         int throws;
         int shoves;
+        int giggles;
+        PowerUpSpawner powerUps;
         bool matchStarted;
         bool finishing;
 
@@ -92,6 +94,7 @@ namespace BabyClash
 #endif
             // The run must not stall when the window is behind a terminal.
             Application.runInBackground = true;
+            PlayerProgress.UseThrowawayProfile(2000);
             startTime = lastFrameTime = windowStart = Time.realtimeSinceStartup;
             nextPerf = perfInterval;
             lastGcCount = windowGcStart = GC.CollectionCount(0);
@@ -110,7 +113,7 @@ namespace BabyClash
         {
             if (!enabled)
                 return;
-            foreach (BabyController baby in roundManager.Babies)
+            foreach (BabyController baby in roundManager.AllBabies)
             {
                 baby.HitReceived += (_, report) => hits++;
                 baby.ThrewItem += (_, item) => throws++;
@@ -119,9 +122,12 @@ namespace BabyClash
             roundManager.PhaseChanged += phase => Log($"t={elapsed:0.0}s round {roundManager.RoundNumber}: {phase}");
             roundManager.MatchEnded += winner =>
             {
-                Log($"Match over. Winner: {(winner != null ? winner.DisplayName : "none")}. Throws {throws}, hits {hits}, shoves {shoves}");
+                string scores = "";
+                foreach (BabyController baby in roundManager.Babies)
+                    scores += $" {baby.DisplayName}={(roundManager.UsesScore ? roundManager.GetScore(baby) : roundManager.GetWins(baby)):0.0}";
+                Log($"Match over. Winner: {(winner != null ? winner.DisplayName : "none")}. Throws {throws}, hits {hits}, shoves {shoves}, giggles {giggles}.{scores}");
                 finishing = true;
-                nextShot = elapsed + 1.5f;
+                nextShot = elapsed + 4.5f;
             };
         }
 
@@ -155,12 +161,32 @@ namespace BabyClash
             {
                 // Leave the title screen for a real (non-endless) CPU vs CPU match.
                 matchStarted = true;
-                gameFlow.StartMatch(false, CpuDifficulty.Hard);
-                foreach (BabyInputHandler input in FindObjectsByType<BabyInputHandler>())
-                    input.enabled = false;
-                foreach (BabyBrain brain in FindObjectsByType<BabyBrain>())
+                if (Argument2("-screens") != null)
+                {
+                    StartCoroutine(TourScreens());
+                    return;
+                }
+                if (Argument2("-touch") != null)
+                {
+                    StartCoroutine(TouchTest());
+                    return;
+                }
+                MatchSetup setup = RequestedSetup();
+                gameFlow.StartMatch(setup);
+                // Human slots are played by brains, so the whole rules/rewards path runs.
+                foreach (BabyController baby in roundManager.Babies)
+                {
+                    baby.GetComponent<BabyInputHandler>().enabled = false;
+                    var brain = baby.GetComponent<BabyBrain>();
+                    if (setup.IsHuman(baby.PlayerIndex))
+                        brain.Difficulty = Argument2("-weak") != null ? CpuDifficulty.Easy : CpuDifficulty.Hard;
                     brain.enabled = true;
-                Log("CPU vs CPU match started.");
+                    baby.Giggled += (_, joker) => giggles++;
+                }
+                powerUps = FindAnyObjectByType<PowerUpSpawner>();
+                if (powerUps != null)
+                    powerUps.Used += (baby, kind) => Log($"t={elapsed:0.0}s {baby.DisplayName} used {kind}");
+                Log($"Match started: {setup.Mode} in {setup.Room}, {setup.Count(false)} babies{(setup.Teams ? ", teams" : "")}{(setup.Level != null ? ", level " + setup.Level.Id : "")}.");
             }
 
             if (elapsed >= nextShot)
@@ -186,6 +212,121 @@ namespace BabyClash
                 Log($"Time limit reached. Throws {throws}, hits {hits}, shoves {shoves}");
                 finishing = true;
             }
+        }
+
+        static string Argument2(string name)
+        {
+            string[] args = Environment.GetCommandLineArgs();
+            int at = Array.IndexOf(args, name);
+            return at < 0 ? null : at + 1 < args.Length ? args[at + 1] : "";
+        }
+
+        /// <summary>The match asked for with -mode / -room / -players / -teams / -level, or a Hard duel.</summary>
+        static MatchSetup RequestedSetup()
+        {
+            string level = Argument2("-level");
+            if (level != null && BabyClash.Core.LevelCatalog.Find(level) != null)
+                return MatchSetup.ForLevel(BabyClash.Core.LevelCatalog.Find(level));
+            var setup = new MatchSetup { Slots = new[] { SlotDriver.Human, SlotDriver.CpuHard, SlotDriver.Off, SlotDriver.Off } };
+            if (Enum.TryParse(Argument2("-mode") ?? "", out BabyClash.Core.GameMode mode))
+                setup.Mode = mode;
+            if (Enum.TryParse(Argument2("-room") ?? "", out BabyClash.Core.RoomKind room))
+                setup.Room = room;
+            if (int.TryParse(Argument2("-players") ?? "", out int players))
+            {
+                for (int i = 1; i < setup.Slots.Length; i++)
+                    setup.Slots[i] = i < players ? SlotDriver.CpuNormal : SlotDriver.Off;
+            }
+            setup.Teams = Argument2("-teams") != null;
+            return setup;
+        }
+
+        System.Collections.IEnumerator TourScreens()
+        {
+            foreach (string button in new[] { "Party", "Story", "ChallengeList", "Wardrobe" })
+            {
+                yield return Photograph("title_" + button, 0.1f);
+                Press(button);
+                yield return Photograph(button, 1.6f);
+                if (button == "Wardrobe")
+                {
+                    Press("Item8");
+                    yield return Photograph("wardrobe_crown", 0.6f);
+                    Press("FACES");
+                    Press("Item4");
+                    yield return Photograph("wardrobe_shades", 0.6f);
+                    Press("OUTFITS");
+                    Press("Item6");
+                    Press("Slot");
+                    Press("HATS");
+                    Press("Item4");
+                    yield return Photograph("wardrobe_baby2_bunny", 1.4f);
+                }
+                Press("Back");
+                yield return new WaitForSecondsRealtime(0.3f);
+            }
+            Log("Screens done.");
+            Invoke(nameof(Quit), 1f);
+        }
+
+        /// <summary>A simulated finger drives baby 1: drag to walk right, tap to throw, tap to dash.</summary>
+        System.Collections.IEnumerator TouchTest()
+        {
+            var screen = UnityEngine.InputSystem.InputSystem.AddDevice<UnityEngine.InputSystem.Touchscreen>();
+            gameFlow.StartMatch(MatchSetup.Duel(true, CpuDifficulty.Easy));
+            BabyController baby = roundManager.AllBabies[0];
+            roundManager.AllBabies[1].GetComponent<BabyBrain>().enabled = false;
+            int thrown = 0, dashed = 0;
+            baby.ThrewItem += (_, item) => thrown++;
+            baby.Dashed += _ => dashed++;
+            while (roundManager.Phase != BabyClash.Core.RoundPhase.Playing)
+                yield return null;
+            Vector3 start = baby.transform.position;
+            var origin = new Vector2(Screen.width * 0.2f, Screen.height * 0.3f);
+            Finger(screen, 1, UnityEngine.InputSystem.TouchPhase.Began, origin);
+            yield return null;
+            yield return null;
+            Finger(screen, 1, UnityEngine.InputSystem.TouchPhase.Moved, origin + new Vector2(Screen.height * 0.12f, 0f));
+            yield return Photograph("touch_walk", 0.7f);
+            Log($"Touch: walked {baby.transform.position.x - start.x:0.0} m right");
+            Finger(screen, 1, UnityEngine.InputSystem.TouchPhase.Ended, origin);
+            yield return new WaitForSeconds(0.3f);
+            yield return Tap(screen, 2, new Vector2(Screen.width * 0.88f, Screen.height * 0.22f));
+            yield return new WaitForSeconds(0.6f);
+            yield return Tap(screen, 3, new Vector2(Screen.width * 0.75f, Screen.height * 0.14f));
+            yield return new WaitForSeconds(0.5f);
+            Log($"Touch: throws {thrown}, dashes {dashed}");
+            Invoke(nameof(Quit), 0.5f);
+        }
+
+        static System.Collections.IEnumerator Tap(UnityEngine.InputSystem.Touchscreen screen, int id, Vector2 position)
+        {
+            Finger(screen, id, UnityEngine.InputSystem.TouchPhase.Began, position);
+            yield return null;
+            yield return null;
+            Finger(screen, id, UnityEngine.InputSystem.TouchPhase.Ended, position);
+        }
+
+        static void Finger(UnityEngine.InputSystem.Touchscreen screen, int id, UnityEngine.InputSystem.TouchPhase phase, Vector2 position) =>
+            UnityEngine.InputSystem.InputSystem.QueueStateEvent(screen, new UnityEngine.InputSystem.LowLevel.TouchState { touchId = id, phase = phase, position = position });
+
+        System.Collections.IEnumerator Photograph(string shot, float wait)
+        {
+            yield return new WaitForSecondsRealtime(wait);
+            ScreenCapture.CaptureScreenshot(Path.Combine(folder, "screen_" + shot + ".png"));
+            yield return new WaitForSecondsRealtime(0.3f);
+        }
+
+        void Press(string buttonName)
+        {
+            foreach (UnityEngine.UI.Button button in FindObjectsByType<UnityEngine.UI.Button>())
+            {
+                if (button.name != buttonName || !button.isActiveAndEnabled)
+                    continue;
+                button.onClick.Invoke();
+                return;
+            }
+            Log("No active button " + buttonName);
         }
 
         void TrackPerformance(float frameTime, float now, int gcCount, bool screenshotFrame)

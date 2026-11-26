@@ -71,6 +71,7 @@ namespace BabyClash
         bool celebrating;
         float squash;
         float squashVelocity;
+        Color? shirt;
 
         /// <summary>Prefab wiring (editor tooling).</summary>
         public void Configure(BabyController owner, BabyFace babyFace, Transform root, Transform hipsBone, Transform chestBone,
@@ -99,6 +100,26 @@ namespace BabyClash
         {
             skinTint = skinTone;
             hairColor = hairTone;
+        }
+
+        /// <summary>Head bone, for hats and face accessories.</summary>
+        public Transform Head => head;
+
+        /// <summary>Recolours the shirt (outfits). Null = the player colour.</summary>
+        public void SetShirt(Color? color)
+        {
+            shirt = color;
+            ApplyShirt();
+        }
+
+        void ApplyShirt()
+        {
+            if (skin == null || baby == null || block == null)
+                return;
+            skin.GetPropertyBlock(block);
+            block.SetColor(AccentColorId, shirt ?? baby.PlayerColor);
+            block.SetColor(BaseColorId, skinTint);
+            skin.SetPropertyBlock(block);
         }
 
         void Awake()
@@ -143,13 +164,7 @@ namespace BabyClash
         {
             if (baby == null)
                 return;
-            if (skin != null)
-            {
-                skin.GetPropertyBlock(block);
-                block.SetColor(AccentColorId, baby.PlayerColor);
-                block.SetColor(BaseColorId, skinTint);
-                skin.SetPropertyBlock(block);
-            }
+            ApplyShirt();
             foreach (Renderer strand in hair)
                 SetColor(strand, hairColor);
         }
@@ -270,7 +285,7 @@ namespace BabyClash
                     break;
             }
 
-            if (celebrating)
+            if (celebrating || baby.IsGiggling)
             {
                 hipsOffset.y += Mathf.Abs(Mathf.Sin(t * 6.5f)) * 0.24f;
                 float wave = Mathf.Sin(t * 12f) * 14f;
@@ -319,11 +334,13 @@ namespace BabyClash
             FaceExpression expression;
             if (activity == BabyActivity.Crying)
                 expression = FaceExpression.Crying;
+            else if (baby.IsGiggling)
+                expression = FaceExpression.Happy;
             else if (activity == BabyActivity.Stunned)
                 expression = hitTimer > 0f ? FaceExpression.Hurt : FaceExpression.Dizzy;
             else if (hitTimer > 0f)
                 expression = FaceExpression.Hurt;
-            else if (celebrating || gloatTimer > 0f)
+            else if (celebrating || baby.IsGiggling || gloatTimer > 0f)
                 expression = FaceExpression.Happy;
             else if (throwTimer > 0f || activity == BabyActivity.Dashing)
                 expression = FaceExpression.Effort;
@@ -338,7 +355,7 @@ namespace BabyClash
         {
             if (dizzyStars != null)
             {
-                bool dizzy = activity == BabyActivity.Stunned;
+                bool dizzy = activity == BabyActivity.Stunned && !baby.IsGiggling;
                 if (dizzyStars.gameObject.activeSelf != dizzy)
                     dizzyStars.gameObject.SetActive(dizzy);
                 if (dizzy)

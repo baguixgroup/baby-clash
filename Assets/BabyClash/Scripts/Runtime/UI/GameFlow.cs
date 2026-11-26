@@ -18,7 +18,7 @@ namespace BabyClash
         public Button howToPlay;
         public Button options;
         public Button quit;
-        public UnityEngine.UI.Text challenges;
+        [NonSerialized] public UnityEngine.UI.Text challenges; // built at runtime
     }
 
     [Serializable]
@@ -83,6 +83,10 @@ namespace BabyClash
             Match,
             Paused,
             Results,
+            Party,
+            Story,
+            Wardrobe,
+            Challenges,
         }
 
         [SerializeField] RoundManager roundManager;
@@ -118,6 +122,18 @@ namespace BabyClash
         CpuDifficulty difficulty = CpuDifficulty.Normal;
         float resultsTimer = -1f;
         BabyController matchWinner;
+        MatchSetup setup = MatchSetup.Duel(true, CpuDifficulty.Normal);
+        MenuKit kit;
+        GameMenus menus;
+        RoomDresser rooms;
+        PowerUpSpawner powerUps;
+        BottleZone bottle;
+        SurvivalDirector survival;
+        TouchControls touch;
+        ArenaCamera arenaCamera;
+        readonly Image[] resultStars = new Image[3];
+        int roundsLost;
+        float matchSeconds;
         MatchStats matchStats;
         string rewardSummary;
         readonly HashSet<Throwable> trackedItems = new HashSet<Throwable>();
@@ -150,7 +166,7 @@ namespace BabyClash
         void Awake()
         {
             title.onePlayer.onClick.AddListener(() => Show(Screen.Difficulty));
-            title.twoPlayers.onClick.AddListener(() => StartMatch(false, difficulty));
+            title.twoPlayers.onClick.AddListener(() => StartMatch(false, CpuDifficulty.Normal));
             title.howToPlay.onClick.AddListener(() => Show(Screen.HowToPlay));
             title.options.onClick.AddListener(() => OpenOptions(Screen.Title));
             title.quit.onClick.AddListener(Quit);
@@ -173,24 +189,37 @@ namespace BabyClash
             options.back.onClick.AddListener(CloseOptions);
 
             pause.resume.onClick.AddListener(Resume);
-            pause.restart.onClick.AddListener(() => StartMatch(soloGame, difficulty));
+            pause.restart.onClick.AddListener(() => StartMatch(setup));
             pause.options.onClick.AddListener(() => OpenOptions(Screen.Paused));
             pause.mainMenu.onClick.AddListener(ShowTitle);
 
-            results.rematch.onClick.AddListener(() => StartMatch(soloGame, difficulty));
-            results.mainMenu.onClick.AddListener(ShowTitle);
+            results.rematch.onClick.AddListener(Rematch);
+            results.mainMenu.onClick.AddListener(() =>
+            {
+                bool story = setup.Level != null;
+                ShowTitle();
+                if (story)
+                    OpenStory();
+            });
         }
 
         void OnEnable()
         {
-            if (roundManager != null)
-                roundManager.MatchEnded += HandleMatchEnded;
+            if (roundManager == null)
+                return;
+            roundManager.MatchEnded += HandleMatchEnded;
+            roundManager.PhaseChanged += HandlePhase;
+            roundManager.BabyCried += RecordKnockout;
         }
 
         void OnDisable()
         {
             if (roundManager != null)
+            {
                 roundManager.MatchEnded -= HandleMatchEnded;
+                roundManager.PhaseChanged -= HandlePhase;
+                roundManager.BabyCried -= RecordKnockout;
+            }
             StopTrackingProgress();
         }
 
@@ -198,11 +227,13 @@ namespace BabyClash
         {
             if (roundManager != null)
             {
-                foreach (BabyController baby in roundManager.Babies)
+                foreach (BabyController baby in roundManager.AllBabies)
                 {
                     baby.ThrewItem -= RecordThrow;
                     baby.Shoved -= RecordShove;
                     baby.StartedCrying -= RecordCrying;
+                    baby.Giggled -= RecordGiggle;
+                    baby.Dodged -= RecordDodge;
                 }
             }
             foreach (Throwable item in trackedItems)
@@ -212,9 +243,7 @@ namespace BabyClash
             matchStats = null;
         }
 
-        bool IsLocalHuman(BabyController baby) => baby != null &&
-            baby.PlayerIndex >= 0 && baby.PlayerIndex < humanInputs.Length &&
-            humanInputs[baby.PlayerIndex] != null && humanInputs[baby.PlayerIndex].enabled;
+        bool IsLocalHuman(BabyController baby) => baby != null && !setup.Endless && setup.IsHuman(baby.PlayerIndex);
 
         void RecordThrow(BabyController baby, Throwable item)
         {
@@ -235,8 +264,36 @@ namespace BabyClash
                 matchStats.diaperHits++;
             else
                 matchStats.toyHits++;
-            if (victim.IsCrying)
+        }
+
+        void RecordKnockout(BabyController victim)
+        {
+            if (matchStats != null && victim.LastAttacker != victim && IsLocalHuman(victim.LastAttacker))
                 matchStats.knockouts++;
+        }
+
+        void RecordGiggle(BabyController baby, BabyController joker)
+        {
+            if (matchStats != null && IsLocalHuman(joker))
+                matchStats.giggles++;
+        }
+
+        void RecordDodge(BabyController baby)
+        {
+            if (matchStats != null && IsLocalHuman(baby))
+                matchStats.dodges++;
+        }
+
+        void RecordPowerUp(BabyController baby, PowerUpKind kind)
+        {
+            if (matchStats != null && IsLocalHuman(baby))
+                matchStats.powerUps++;
+        }
+
+        void HandlePhase(RoundPhase phase)
+        {
+            if (phase == RoundPhase.RoundOver && screen == Screen.Match && roundManager.WinningSide != roundManager.SideOf(roundManager.AllBabies[0]))
+                roundsLost++;
         }
 
         void RecordShove(BabyController baby, BabyController victim)
@@ -244,8 +301,6 @@ namespace BabyClash
             if (matchStats != null && IsLocalHuman(baby))
             {
                 matchStats.shoves++;
-                if (victim.IsCrying)
-                    matchStats.knockouts++;
             }
         }
 
@@ -257,6 +312,7 @@ namespace BabyClash
 
         IEnumerator Start()
         {
+            BuildGame();
             // Hide every menu until the loading screen is done.
             Show(Screen.Match);
             if (warmup != null)
@@ -286,10 +342,21 @@ namespace BabyClash
             }
             else if (CancelPressed())
             {
-                if (screen == Screen.Difficulty || screen == Screen.HowToPlay)
+                if (screen == Screen.Wardrobe || screen == Screen.Party || screen == Screen.Story || screen == Screen.Challenges)
+                    BackToTitle();
+                else if (screen == Screen.Difficulty || screen == Screen.HowToPlay)
                     Show(Screen.Title);
                 else if (screen == Screen.Options)
                     CloseOptions();
+            }
+
+            if (screen == Screen.Story)
+                menus.UpdateStoryDetail();
+            if (screen == Screen.Match && roundManager.Phase == RoundPhase.Playing)
+            {
+                matchSeconds += Time.deltaTime;
+                if (matchStats != null && BottleZone.Active != null && IsLocalHuman(BottleZone.Active.Holder))
+                    matchStats.bottleSeconds += Time.deltaTime;
             }
 
             if (resultsTimer >= 0f)
@@ -314,8 +381,10 @@ namespace BabyClash
             resultsTimer = -1f;
             timeController.SetPaused(false);
             timeController.ClearEffects();
-            SetControllers(false, false, demoDifficulty);
-            roundManager.StartMatch(true);
+            EndCloseUp();
+            MatchSetup demo = MatchSetup.Demo(demoDifficulty);
+            ApplySetup(demo);
+            roundManager.StartMatch(demo);
             hud.SetVisible(false);
             audioDirector.PlayMusic(MusicId.Title);
             audioDirector.DuckMusic(false);
@@ -329,8 +398,8 @@ namespace BabyClash
             rect.SetParent(title.root.transform, false);
             rect.anchorMin = rect.anchorMax = new Vector2(1f, 0.4f);
             rect.pivot = new Vector2(1f, 0.5f);
-            rect.anchoredPosition = new Vector2(-30f, 0f);
-            rect.sizeDelta = new Vector2(430f, 420f);
+            rect.anchoredPosition = new Vector2(-20f, 0f);
+            rect.sizeDelta = new Vector2(400f, 360f);
             panel.GetComponent<UnityEngine.UI.Image>().color = new Color(0.15f, 0.08f, 0.2f, 0.92f);
             var label = new GameObject("Progress", typeof(RectTransform), typeof(UnityEngine.UI.Text));
             var textRect = (RectTransform)label.transform;
@@ -341,7 +410,7 @@ namespace BabyClash
             textRect.offsetMax = new Vector2(-20f, -20f);
             title.challenges = label.GetComponent<UnityEngine.UI.Text>();
             title.challenges.font = title.onePlayer.GetComponentInChildren<UnityEngine.UI.Text>().font;
-            title.challenges.fontSize = 28;
+            title.challenges.fontSize = 25;
             title.challenges.color = Color.white;
             title.challenges.alignment = TextAnchor.MiddleLeft;
             title.challenges.raycastTarget = false;
@@ -349,24 +418,36 @@ namespace BabyClash
 
         public void StartMatch(bool solo, CpuDifficulty cpuDifficulty)
         {
-            StopTrackingProgress();
-            rewardSummary = "";
-            soloGame = solo;
             difficulty = cpuDifficulty;
+            StartMatch(MatchSetup.Duel(solo, cpuDifficulty));
+        }
+
+        public void StartMatch(MatchSetup matchSetup)
+        {
+            StopTrackingProgress();
+            setup = matchSetup;
+            rewardSummary = "";
+            soloGame = setup.Count(true) == 1;
             resultsTimer = -1f;
+            roundsLost = 0;
+            matchSeconds = 0f;
             timeController.SetPaused(false);
             timeController.ClearEffects();
-            SetControllers(true, !solo, cpuDifficulty);
-            matchStats = new MatchStats { mode = GameMode.Clash.ToString() };
-            foreach (BabyController baby in roundManager.Babies)
+            EndCloseUp();
+            ApplySetup(setup);
+            matchStats = new MatchStats { mode = setup.Mode.ToString(), tinyTots = setup.IsToddler };
+            foreach (BabyController baby in roundManager.AllBabies)
             {
                 baby.ThrewItem += RecordThrow;
                 baby.Shoved += RecordShove;
                 baby.StartedCrying += RecordCrying;
+                baby.Giggled += RecordGiggle;
+                baby.Dodged += RecordDodge;
             }
-            roundManager.StartMatch(false);
+            roundManager.StartMatch(setup);
             hud.SetVisible(true);
-            hud.ShowHints();
+            if (!setup.IsToddler)
+                hud.ShowHints();
             audioDirector.PlayMusic(MusicId.Match);
             audioDirector.DuckMusic(false);
             Show(Screen.Match);
@@ -401,6 +482,180 @@ namespace BabyClash
             Show(optionsReturn);
         }
 
+        /// <summary>Everything beyond the basic scene, built once at load: players 3 and 4, rooms, modes, menus, touch.</summary>
+        void BuildGame()
+        {
+            kit = new MenuKit(title.onePlayer, audioDirector);
+            arenaCamera = FindAnyObjectByType<ArenaCamera>();
+            ArenaBounds arena = FindAnyObjectByType<ArenaBounds>();
+            ImpactFeedback feedback = FindAnyObjectByType<ImpactFeedback>();
+            // Feedback re-subscribes to the bigger cast when it comes back on.
+            if (feedback != null)
+                feedback.enabled = false;
+            BabyController[] cast = BabyRoster.Expand(roundManager, arena, arenaCamera);
+            if (feedback != null)
+                feedback.enabled = true;
+            humanInputs = Array.ConvertAll(cast, baby => baby.GetComponent<BabyInputHandler>());
+            brains = Array.ConvertAll(cast, baby => baby.GetComponent<BabyBrain>());
+
+            rooms = new GameObject("RoomDresser").AddComponent<RoomDresser>();
+            rooms.Configure(roundManager);
+            powerUps = gameObject.AddComponent<PowerUpSpawner>();
+            powerUps.Configure(roundManager, arena, audioDirector);
+            powerUps.Used += RecordPowerUp;
+            bottle = BottleZone.Create(roundManager);
+            survival = gameObject.AddComponent<SurvivalDirector>();
+            survival.Configure(roundManager);
+            hud.Expand(cast, survival);
+            touch = TouchControls.Create(kit);
+
+            menus = new GameMenus(kit, title.root.transform.parent, StartMatch, BackToTitle);
+            menus.WardrobeChanged += ShowWardrobeBaby;
+            BuildTitleButtons();
+            for (int i = 0; i < resultStars.Length; i++)
+                resultStars[i] = kit.Star(results.title.transform.parent, new Vector2(-110f + i * 110f, 300f), 100f);
+        }
+
+        void BuildTitleButtons()
+        {
+            Transform column = title.onePlayer.transform.parent;
+            PlaceTitleButton(title.onePlayer, -1, 0);
+            PlaceTitleButton(title.twoPlayers, -1, 1);
+            PlaceTitleButton(title.howToPlay, 1, 2);
+            PlaceTitleButton(title.options, 1, 3);
+            PlaceTitleButton(title.quit, 1, 4);
+            PlaceTitleButton(kit.Button("Story", column, "STORY TOUR", MenuKit.Yellow, Vector2.zero, new Vector2(440f, 90f), 38, OpenStory), -1, 2);
+            PlaceTitleButton(kit.Button("Party", column, "PARTY", MenuKit.Mint, Vector2.zero, new Vector2(440f, 90f), 38, () => Show(Screen.Party)), -1, 3);
+            PlaceTitleButton(kit.Button("TinyTots", column, "TINY TOTS", MenuKit.Lilac, Vector2.zero, new Vector2(440f, 90f), 38,
+                () => StartMatch(MatchSetup.Tots(Gamepad.all.Count > 0 ? 2 : 1))), -1, 4);
+            PlaceTitleButton(kit.Button("Wardrobe", column, "WARDROBE", MenuKit.Pink, Vector2.zero, new Vector2(440f, 90f), 38, OpenWardrobe), 1, 0);
+            PlaceTitleButton(kit.Button("ChallengeList", column, "CHALLENGES", MenuKit.Blue, Vector2.zero, new Vector2(440f, 90f), 38, OpenChallenges), 1, 1);
+        }
+
+        static void PlaceTitleButton(Button button, int side, int row)
+        {
+            var rect = (RectTransform)button.transform;
+            rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 1f);
+            rect.anchoredPosition = new Vector2(side * 232f, -row * 102f - 60f);
+        }
+
+        void OpenStory()
+        {
+            menus.RefreshStory();
+            Show(Screen.Story);
+        }
+
+        void OpenChallenges()
+        {
+            menus.RefreshChallenges();
+            Show(Screen.Challenges);
+        }
+
+        public void OpenWardrobe()
+        {
+            // Everyone stands still in the nursery; the chosen baby poses for the camera.
+            var pose = new MatchSetup { Endless = true, Slots = new[] { SlotDriver.CpuEasy, SlotDriver.CpuEasy, SlotDriver.CpuEasy, SlotDriver.CpuEasy } };
+            ApplySetup(pose);
+            roundManager.StartMatch(pose);
+            roundManager.StopMatch();
+            hud.SetVisible(false);
+            menus.RefreshWardrobe();
+            ShowWardrobeBaby();
+            Show(Screen.Wardrobe);
+        }
+
+        void ShowWardrobeBaby()
+        {
+            for (int i = 0; i < roundManager.AllBabies.Count; i++)
+            {
+                BabyController baby = roundManager.AllBabies[i];
+                OutfitRig.On(baby).Wear(PlayerProgress.Profile.LookFor(i));
+                bool chosen = i == menus.WardrobeSlot;
+                Vector3 place = chosen ? new Vector3(-5.2f, 0f, -0.2f) : new Vector3(-1f + i * 2.4f, 0f, 3.9f);
+                baby.Movement.Teleport(place, Quaternion.LookRotation(Vector3.back));
+                if (chosen && arenaCamera != null)
+                    arenaCamera.CloseUp = baby.transform;
+            }
+        }
+
+        void EndCloseUp()
+        {
+            if (arenaCamera != null)
+                arenaCamera.CloseUp = null;
+        }
+
+        void BackToTitle()
+        {
+            if (screen == Screen.Wardrobe)
+                ShowTitle();
+            else
+                Show(Screen.Title);
+        }
+
+        void Rematch()
+        {
+            LevelDef level = setup.Level;
+            int next = level != null ? LevelCatalog.IndexOf(level.Id) + 1 : 0;
+            if (level != null && levelCleared && next < LevelCatalog.All.Count)
+                StartMatch(MatchSetup.ForLevel(LevelCatalog.All[next]));
+            else
+                StartMatch(setup);
+        }
+
+        bool levelCleared;
+
+        /// <summary>Room, controllers, outfits and mode objects for a match.</summary>
+        void ApplySetup(MatchSetup next)
+        {
+            rooms.Show(next.Room);
+            bottle.gameObject.SetActive(next.Mode == GameMode.KingOfTheBottle);
+            touch.Playing = !next.Endless && next.IsHuman(0);
+            touch.Simple = next.IsToddler;
+            hud.SetRules(next);
+
+            int humans = next.Count(true), pads = Gamepad.all.Count, human = 0;
+            for (int i = 0; i < brains.Length; i++)
+            {
+                bool isHuman = next.IsHuman(i);
+                BabyController baby = roundManager.AllBabies[i];
+                BabyLook look = PlayerProgress.Profile.LookFor(i);
+                // Rivals dress up too, differently every time.
+                OutfitRig.On(baby).Wear(isHuman || !next.IsPlaying(i) || next.Endless ? look : RandomLook());
+                if (isHuman)
+                {
+                    string scheme = human == 0 ? BabyInputHandler.KeyboardLeftScheme : human == 1 ? BabyInputHandler.KeyboardRightScheme : null;
+                    // Two humans: a pad each. More: the ones without a keyboard half get pads first.
+                    int pad = humans <= 2 ? human : human >= 2 ? human - 2 : human + humans - 2;
+                    humanInputs[i].AssignDevices(scheme, pad < pads ? pad : -1);
+                    human++;
+                }
+                humanInputs[i].enabled = isHuman;
+                // A lone player can use either half of the keyboard.
+                humanInputs[i].SetSoloKeyboard(isHuman && humans == 1);
+                brains[i].Difficulty = next.Level != null && next.BossSlot == i ? CpuDifficulty.Hard : MatchSetup.DifficultyOf(next.Slots[i]);
+                brains[i].Gentle = next.IsToddler;
+                brains[i].enabled = !isHuman && next.IsPlaying(i);
+                if (!isHuman)
+                    baby.SpeedScale = 1f;
+
+                if (!baby.TryGetComponent(out TotsHelper helper))
+                    helper = baby.gameObject.AddComponent<TotsHelper>();
+                helper.enabled = isHuman && next.IsToddler;
+                helper.AnyKey = humans == 1;
+            }
+        }
+
+        static BabyLook RandomLook()
+        {
+            var look = new BabyLook();
+            foreach (CosmeticSlot slot in new[] { CosmeticSlot.Hat, CosmeticSlot.Face })
+            {
+                var choices = new List<CosmeticItem>(CosmeticCatalog.InSlot(slot));
+                look.Set(slot, choices[UnityEngine.Random.Range(0, choices.Count)].Id);
+            }
+            return look;
+        }
+
         void HandleMatchEnded(BabyController winner)
         {
             if (screen != Screen.Match)
@@ -413,9 +668,17 @@ namespace BabyClash
         {
             if (matchStats != null)
             {
-                if (Array.Exists(humanInputs, input => input != null && input.enabled))
+                if (setup.Count(true) > 0)
                 {
-                    matchStats.won = IsLocalHuman(matchWinner);
+                    matchStats.won = HumanWon();
+                    if (setup.Mode == GameMode.Survival)
+                    {
+                        matchStats.survivalWave = survival.Wave;
+                        PlayerProfile profile = PlayerProgress.Profile;
+                        profile.bestSurvivalWave = Mathf.Max(profile.bestSurvivalWave, survival.Wave);
+                        profile.bestSurvivalScore = Mathf.Max(profile.bestSurvivalScore, survival.Knockouts);
+                    }
+                    RecordLevel();
                     rewardSummary = PlayerProgress.CompleteMatch(matchStats);
                 }
                 StopTrackingProgress();
@@ -431,16 +694,24 @@ namespace BabyClash
             results.detail.rectTransform.sizeDelta = new Vector2(1000f, 240f);
             results.detail.rectTransform.anchoredPosition = new Vector2(0f, -260f);
             BabyController winner = matchWinner;
-            results.title.text = winner != null ? $"{winner.DisplayName} WINS!" : "IT'S A TIE!";
-            results.title.color = winner != null ? winner.PlayerColor : Color.white;
+            results.title.text = ResultTitle(winner);
+            results.title.color = setup.IsToddler || setup.Mode == GameMode.Survival ? MenuKit.Pink : winner != null ? winner.PlayerColor : MenuKit.Ink;
+            ShowResultStars();
+            bool nextLevel = setup.Level != null && levelCleared && LevelCatalog.IndexOf(setup.Level.Id) + 1 < LevelCatalog.All.Count;
+            MenuKit.SetText(results.rematch, nextLevel ? "NEXT LEVEL" : setup.Level != null && !levelCleared ? "TRY AGAIN" : "REMATCH");
+            MenuKit.SetText(results.mainMenu, setup.Level != null ? "LEVELS" : "MAIN MENU");
 
-            string score = roundManager.Babies.Count >= 2
-                ? $"{roundManager.GetWins(roundManager.Babies[0])}  -  {roundManager.GetWins(roundManager.Babies[1])}"
-                : string.Empty;
+            string score = ScoreLine();
             string flavour;
-            if (!soloGame || winner == null)
+            if (setup.IsToddler)
+                flavour = "Everyone had fun!";
+            else if (setup.Level != null)
+                flavour = GoalLines();
+            else if (setup.Mode == GameMode.Survival)
+                flavour = $"Best: wave {PlayerProgress.Profile.bestSurvivalWave}";
+            else if (!soloGame || winner == null)
                 flavour = "What a tantrum!";
-            else if (winner == roundManager.Babies[0])
+            else if (HumanWon())
                 flavour = "You win! Nap time for the CPU.";
             else
                 flavour = "The CPU baby wins... rematch?";
@@ -452,23 +723,88 @@ namespace BabyClash
             Show(Screen.Results);
         }
 
-        void SetControllers(bool humanOne, bool humanTwo, CpuDifficulty cpuDifficulty)
+        bool HumanWon()
         {
-            for (int i = 0; i < brains.Length; i++)
+            if (setup.Mode == GameMode.Survival)
+                return setup.Level != null && survival.Wave >= setup.Level.WaveGoal;
+            foreach (BabyController baby in roundManager.Babies)
             {
-                bool human = i == 0 ? humanOne : i == 1 && humanTwo;
-                if (i < humanInputs.Length && humanInputs[i] != null)
-                {
-                    humanInputs[i].enabled = human;
-                    // A lone player can use either half of the keyboard.
-                    humanInputs[i].SetSoloKeyboard(i == 0 && humanOne && !humanTwo);
-                }
-                if (brains[i] != null)
-                {
-                    brains[i].Difficulty = cpuDifficulty;
-                    brains[i].enabled = !human;
-                }
+                if (IsLocalHuman(baby) && roundManager.SideOf(baby) == roundManager.MatchWinningSide)
+                    return true;
             }
+            return false;
+        }
+
+        LevelResult levelResult;
+        int levelStars;
+
+        void RecordLevel()
+        {
+            levelCleared = false;
+            levelStars = 0;
+            if (setup.Level == null)
+                return;
+            levelResult = new LevelResult
+            {
+                won = matchStats.won, cried = matchStats.cried, roundsLost = roundsLost, seconds = matchSeconds,
+                hits = matchStats.hits, wave = survival.Wave,
+            };
+            levelStars = LevelCatalog.Evaluate(setup.Level, levelResult);
+            levelCleared = levelStars > 0;
+            matchStats.stars = levelStars;
+            PlayerProgress.Profile.RecordStars(setup.Level.Id, levelStars);
+        }
+
+        void ShowResultStars()
+        {
+            for (int i = 0; i < resultStars.Length; i++)
+            {
+                resultStars[i].gameObject.SetActive(setup.Level != null || setup.IsToddler);
+                MenuKit.SetStar(resultStars[i], setup.IsToddler || i < levelStars);
+            }
+        }
+
+        string ResultTitle(BabyController winner)
+        {
+            if (setup.IsToddler)
+                return "HOORAY!";
+            if (setup.Mode == GameMode.Survival)
+                return $"WAVE {survival.Wave}!";
+            if (winner == null)
+                return "IT'S A TIE!";
+            string names = "";
+            int count = 0;
+            foreach (BabyController baby in roundManager.Babies)
+            {
+                if (roundManager.SideOf(baby) != roundManager.MatchWinningSide)
+                    continue;
+                names += (count++ > 0 ? " & " : "") + baby.DisplayName;
+            }
+            return count > 1 ? $"{names} WIN!" : $"{winner.DisplayName} WINS!";
+        }
+
+        string ScoreLine()
+        {
+            if (setup.Mode == GameMode.Survival)
+                return $"{survival.Knockouts} babies sent crying";
+            string line = "";
+            if (setup.IsToddler)
+                return line;
+            foreach (BabyController baby in roundManager.Babies)
+            {
+                int value = roundManager.UsesScore ? Mathf.FloorToInt(roundManager.GetScore(baby)) : roundManager.GetWins(baby);
+                line += (line.Length > 0 ? "  -  " : "") + value;
+            }
+            return line;
+        }
+
+        string GoalLines()
+        {
+            LevelDef level = setup.Level;
+            string text = "";
+            foreach (StarGoal goal in new[] { StarGoal.Win, level.Second, level.Third })
+                text += (text.Length > 0 ? "     " : "") + (LevelCatalog.Meets(level, goal, levelResult) ? "[x] " : "[  ] ") + LevelCatalog.Describe(level, goal);
+            return text;
         }
 
         void Show(Screen next)
@@ -480,6 +816,13 @@ namespace BabyClash
             options.root.SetActive(next == Screen.Options);
             pause.root.SetActive(next == Screen.Paused);
             results.root.SetActive(next == Screen.Results);
+            if (menus != null)
+            {
+                menus.PartyScreen.SetActive(next == Screen.Party);
+                menus.StoryScreen.SetActive(next == Screen.Story);
+                menus.WardrobeScreen.SetActive(next == Screen.Wardrobe);
+                menus.ChallengesScreen.SetActive(next == Screen.Challenges);
+            }
 
             EventSystem events = EventSystem.current;
             if (events != null)
@@ -499,6 +842,10 @@ namespace BabyClash
                 case Screen.Options: return options.music;
                 case Screen.Paused: return pause.resume;
                 case Screen.Results: return results.rematch;
+                case Screen.Party: return menus.PartyFirst;
+                case Screen.Story: return menus.StoryFirst;
+                case Screen.Wardrobe: return menus.WardrobeFirst;
+                case Screen.Challenges: return menus.ChallengesFirst;
                 default: return null;
             }
         }

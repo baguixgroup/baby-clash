@@ -59,6 +59,15 @@ namespace BabyClash
             items = trackedItems;
         }
 
+        /// <summary>Watches more babies and items (extra players joining the match).</summary>
+        public void Track(BabyController[] allBabies, Throwable[] extraItems)
+        {
+            babies = allBabies;
+            int count = items.Length;
+            Array.Resize(ref items, count + extraItems.Length);
+            extraItems.CopyTo(items, count);
+        }
+
         public bool IsInside(Vector3 worldPosition)
         {
             Vector3 local = worldPosition - transform.position;
@@ -108,7 +117,7 @@ namespace BabyClash
 
             foreach (BabyController baby in babies)
             {
-                if (baby == null)
+                if (baby == null || !baby.isActiveAndEnabled)
                     continue;
 
                 Vector3 position = baby.transform.position;

@@ -51,6 +51,15 @@ namespace BabyClash.Core
             return Value - previous;
         }
 
+        /// <summary>Calms the baby (cuddles, between survival waves). Does nothing once the meter is full.</summary>
+        public void Reduce(float amount)
+        {
+            if (IsFull || Value <= 0f || !(amount > 0f))
+                return;
+            Value = Math.Max(0f, Value - amount);
+            Changed?.Invoke(Value);
+        }
+
         public void Reset()
         {
             Value = 0f;

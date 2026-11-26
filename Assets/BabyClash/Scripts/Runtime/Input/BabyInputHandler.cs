@@ -30,6 +30,7 @@ namespace BabyClash
         [SerializeField] int gamepadSlot;
 
         bool soloKeyboard;
+        bool useKeyboard = true;
 
         readonly List<InputDevice> deviceList = new List<InputDevice>(2);
         BabyController controller;
@@ -52,6 +53,19 @@ namespace BabyClash
             soloKeyboard = solo;
             if (actions != null)
                 ApplyBindingMask();
+        }
+
+        /// <summary>Chooses this player's devices: a keyboard half (null = none) and a gamepad (-1 = none).</summary>
+        public void AssignDevices(string scheme, int gamepad)
+        {
+            useKeyboard = scheme != null;
+            if (scheme != null)
+                keyboardScheme = scheme;
+            gamepadSlot = gamepad;
+            if (actions == null)
+                return;
+            ApplyBindingMask();
+            AssignDevices();
         }
 
         void Awake() => controller = GetComponent<BabyController>();
@@ -92,7 +106,18 @@ namespace BabyClash
                 return;
             }
 
-            controller.SetMoveInput(moveAction.ReadValue<Vector2>());
+            Vector2 move = moveAction.ReadValue<Vector2>();
+            TouchControls touch = TouchControls.Active;
+            if (touch != null && controller.PlayerIndex == 0)
+            {
+                if (touch.Move.sqrMagnitude > move.sqrMagnitude)
+                    move = touch.Move;
+                if (touch.ConsumeAction())
+                    controller.PressAction();
+                if (touch.ConsumeDash())
+                    controller.PressDash();
+            }
+            controller.SetMoveInput(move);
             if (contextAction.WasPressedThisFrame())
                 controller.PressAction();
             if (dashAction.WasPressedThisFrame())
@@ -138,7 +163,7 @@ namespace BabyClash
         void AssignDevices()
         {
             deviceList.Clear();
-            if (Keyboard.current != null)
+            if (useKeyboard && Keyboard.current != null)
                 deviceList.Add(Keyboard.current);
             if (gamepadSlot >= 0 && gamepadSlot < Gamepad.all.Count)
                 deviceList.Add(Gamepad.all[gamepadSlot]);

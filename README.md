@@ -60,11 +60,26 @@ into the other baby you **shove** them: a little Cry, a big push, and their toy 
 
 ## Game modes
 
-- **1 Player**: you (Baby 1) vs a CPU baby. Choose **Easy** (nap time), **Normal** (cranky) or **Hard** (teething).
-  The CPU plays by exactly the same rules through the same controls: it fetches diapers, grabs toys, leads its
-  throws on Hard, dodges with dashes, and shoves when it's close.
-- **2 Players**: local versus on one keyboard, two gamepads, or a mix.
-- Matches are **best of 3** rounds with a **75-second** clock. When time runs out, the calmer baby (lower Cry) wins.
+- **1 Player / 2 Players**: the classic best-of-3 duel (75-second rounds; on time-up the calmer side wins).
+- **Story Tour**: 20 levels in 5 rooms, three stars each, unlocked in order, with boss babies and 2v2 levels.
+- **Party**: 2-4 babies, any mix of players and CPUs, any room, power-ups on/off, 2v2 teams with 4 babies. Modes:
+  Clash / Brawl (last calm side wins), King of the Bottle (hold the ring, first to 20), Survival (endless waves),
+  Tiny Tots.
+- **Tiny Tots** (toddlers): hits make babies giggle, nobody loses, pickups are automatic, aiming is automatic, the CPU
+  is gentle, and a lone player can press any key (or tap anywhere) to throw.
+- **Rooms**: Nursery; Kitchen (sticky jam); Bath (slippery); Backyard (sandpits, sprinkler); Daycare (robot vacuum).
+- **Power-ups**: Pacifier (absorbs 2 hits), Sippy Cup (speed), Lollipop (mega throws), Bubble Wand (traps the nearest
+  rival), Teddy (calms your Cry Meter).
+- **Progress**: rattles from every match, daily challenges with a streak, and a Wardrobe of hats, faces and outfits.
+- **Touch** (touch screens, including the browser build): drag the left half to move, tap THROW / DASH.
+
+Players 3 and 4 use gamepads. Everything above is built at runtime by `GameFlow.BuildGame` (`Scripts/Runtime/Modes`,
+`UI/MenuKit`, `UI/GameMenus`), so it works with the existing generated scene.
+
+Automated runs: `-smoketest <dir>` plus `-mode <Mode> -room <Room> -players N [-teams 1]`, `-level <id>`, `-screens 1`
+(photographs the menus) or `-touch 1` (simulated finger). They use a throwaway profile and never touch the save.
+
+Online play is not implemented yet.
 
 ## Architecture
 
@@ -131,7 +146,7 @@ Feel knobs live on scene components: `Main Camera → ArenaCamera` (framing/shak
 ## Tests
 
 **Window → General → Test Runner**:
-- **EditMode, 48 tests**: Cry Meter, damage/knockback, item ownership (throw → hit once → land → opponent picks
+- **EditMode, 63 tests**: Cry Meter, damage/knockback, item ownership (throw → hit once → land → opponent picks
   up the same item → throws it back), dash and dodge windows, stun, crying, rounds, the round clock, best-of-3,
   time-up decisions.
 - **PlayMode, 18 tests** with real physics: babies start protected; throwing removes protection and the diaper
@@ -179,7 +194,7 @@ Feel knobs live on scene components: `Main Camera → ArenaCamera` (framing/shak
 
 ## Known limitations
 
-- One arena. Babies differ only in looks (no character traits yet).
+- Babies differ only in looks (no character traits yet).
 - The UI font is Unity's built-in one. A rounder, playful font (e.g. an OFL-licensed one) would suit the game
   better and is a one-line swap in `UiFactory`.
 - No online play, rebinding screen, localisation, save data beyond volume settings, or achievements.

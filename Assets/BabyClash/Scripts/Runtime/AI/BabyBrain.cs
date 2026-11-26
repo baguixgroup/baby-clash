@@ -16,6 +16,7 @@ namespace BabyClash
             Reposition,
             GetDiaper,
             GetToy,
+            GetPowerUp,
             Attack,
         }
 
@@ -50,7 +51,7 @@ namespace BabyClash
         BabyController self;
         BabyController opponent;
         Intent intent;
-        Vector3 targetPoint;
+        PowerUpPickup targetPowerUp;
         Throwable targetItem;
         float decisionTimer;
         float strafeSign = 1f;
@@ -64,6 +65,11 @@ namespace BabyClash
             get => difficulty;
             set => difficulty = value;
         }
+
+        /// <summary>Toddler mode: slow, forgiving and never dashes.</summary>
+        public bool Gentle { get; set; }
+
+        static readonly CpuSettings gentle = new CpuSettings(0.55f, 14f, 0f, 0.3f, 0f, 0.65f);
 
         /// <summary>Scene wiring (editor tooling and tests).</summary>
         public void Configure(CpuConfig cpuConfig, RoundManager manager, CpuDifficulty level)
@@ -97,7 +103,7 @@ namespace BabyClash
                 return;
             }
 
-            CpuSettings settings = config.Get(difficulty);
+            CpuSettings settings = Gentle ? gentle : config.Get(difficulty);
             self.SpeedScale = settings.speedMultiplier;
             opponent = FindOpponent();
 
@@ -133,6 +139,21 @@ namespace BabyClash
             if (self.Hands.IsHolding)
             {
                 intent = Intent.Attack;
+                return;
+            }
+
+            // King of the Bottle: the ring comes first most of the time.
+            BottleZone bottle = BottleZone.Active;
+            if (bottle != null && !bottle.Contains(transform.position) && Random.value < 0.6f)
+            {
+                intent = Intent.Reposition;
+                return;
+            }
+
+            targetPowerUp = PowerUpPickup.Nearest(transform.position, toyInterestRange);
+            if (targetPowerUp != null && Random.value < 0.7f)
+            {
+                intent = Intent.GetPowerUp;
                 return;
             }
 
@@ -189,6 +210,13 @@ namespace BabyClash
                         decisionTimer = 0f;
                     }
                     Steer(toItem, 1f);
+                    break;
+
+                case Intent.GetPowerUp:
+                    if (targetPowerUp == null || !targetPowerUp.isActiveAndEnabled)
+                        decisionTimer = 0f;
+                    else
+                        Steer(Flat(targetPowerUp.transform.position - position), 1f);
                     break;
 
                 case Intent.Attack:
@@ -256,6 +284,12 @@ namespace BabyClash
             }
 
             Vector3 position = transform.position;
+            BottleZone bottle = BottleZone.Active;
+            if (bottle != null && !bottle.Contains(position))
+            {
+                Steer(Flat(bottle.transform.position - position), 1f);
+                return;
+            }
             Vector3 fromOpponent = Flat(position - opponent.transform.position);
             float distance = fromOpponent.magnitude;
             Vector3 away = distance > 0.01f ? fromOpponent / distance : Vector3.right;
@@ -411,7 +445,7 @@ namespace BabyClash
             float bestDistance = float.MaxValue;
             foreach (BabyController baby in roundManager.Babies)
             {
-                if (baby == null || baby == self || baby.IsCrying)
+                if (baby == null || baby == self || baby.IsCrying || self.IsAlly(baby) || !baby.isActiveAndEnabled)
                     continue;
                 float distance = (baby.transform.position - transform.position).sqrMagnitude;
                 if (distance < bestDistance)

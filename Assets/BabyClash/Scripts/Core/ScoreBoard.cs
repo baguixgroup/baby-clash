@@ -34,7 +34,7 @@ namespace BabyClash.Core
 
         public void Add(int side, float amount)
         {
-            if (side < 0 || side >= scores.Length || !(amount > 0f))
+            if (side < 0 || side >= scores.Length || !(amount > 0f) || IsTargetReached)
                 return;
             scores[side] += amount;
             if (HasTarget && !IsTargetReached && scores[side] >= Target)
