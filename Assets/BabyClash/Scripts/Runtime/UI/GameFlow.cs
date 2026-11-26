@@ -337,6 +337,9 @@ namespace BabyClash
 
         IEnumerator Start()
         {
+            // Phones and tablets default to 30 fps.
+            if (Application.isMobilePlatform)
+                Application.targetFrameRate = 60;
             BuildGame();
             // Hide every menu until the loading screen is done.
             Show(Screen.Match);
@@ -478,7 +481,7 @@ namespace BabyClash
             roundManager.StartMatch(setup);
             hud.SetVisible(true);
             // The control hints describe local players' keys; online each screen has a single player.
-            if (!setup.IsToddler && !NetRole.IsOnline)
+            if (!setup.IsToddler && !NetRole.IsOnline && !Application.isMobilePlatform)
                 hud.ShowHints();
             audioDirector.PlayMusic(MusicId.Match);
             audioDirector.DuckMusic(false);
@@ -561,6 +564,11 @@ namespace BabyClash
             NetSmokeTest.CreateIfRequested(this, net, roundManager);
 
             menus = new GameMenus(kit, title.root.transform.parent, StartMatch, BackToTitle);
+            gameObject.AddComponent<AspectMatch>();
+            // Keyboard and gamepad instructions mean nothing on a tablet.
+            Transform footer = title.root.transform.Find("Footer");
+            if (footer != null && Application.isMobilePlatform)
+                footer.gameObject.SetActive(false);
             menus.WardrobeChanged += ShowWardrobeBaby;
             BuildTitleButtons();
             for (int i = 0; i < resultStars.Length; i++)
@@ -575,6 +583,8 @@ namespace BabyClash
             PlaceTitleButton(title.howToPlay, 1, 2);
             PlaceTitleButton(title.options, 1, 3);
             PlaceTitleButton(title.quit, 1, 4);
+            // Apple doesn't allow apps to quit themselves.
+            title.quit.gameObject.SetActive(Application.platform != RuntimePlatform.IPhonePlayer);
             PlaceTitleButton(kit.Button("Story", column, "STORY TOUR", MenuKit.Yellow, Vector2.zero, new Vector2(440f, 90f), 38, OpenStory), -1, 2);
             PlaceTitleButton(kit.Button("Party", column, "PARTY", MenuKit.Mint, Vector2.zero, new Vector2(440f, 90f), 38, () => Show(Screen.Party)), -1, 3);
             PlaceTitleButton(kit.Button("TinyTots", column, "TINY TOTS", MenuKit.Lilac, Vector2.zero, new Vector2(440f, 90f), 38,
@@ -964,6 +974,9 @@ namespace BabyClash
         void Show(Screen next)
         {
             screen = next;
+            // Tablets stay awake during matches (no hands on the screen for a while is normal mid-fight).
+            if (Application.isMobilePlatform)
+                UnityEngine.Screen.sleepTimeout = next == Screen.Match ? SleepTimeout.NeverSleep : SleepTimeout.SystemSetting;
             title.root.SetActive(next == Screen.Title);
             difficultyMenu.root.SetActive(next == Screen.Difficulty);
             howToPlay.root.SetActive(next == Screen.HowToPlay);

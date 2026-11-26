@@ -3,6 +3,7 @@ using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.Controls;
 using UnityEngine.UI;
 using TouchPhase = UnityEngine.InputSystem.TouchPhase;
+using EnhancedTouch = UnityEngine.InputSystem.EnhancedTouch;
 
 namespace BabyClash
 {
@@ -62,12 +63,48 @@ namespace BabyClash
             rect.anchoredPosition = Vector2.zero;
         }
 
-        void OnEnable() => Active = this;
+        void OnEnable()
+        {
+            Active = this;
+            // Button taps come from touch events, so a jab shorter than a frame still counts (polling would miss it).
+            EnhancedTouch.EnhancedTouchSupport.Enable();
+            EnhancedTouch.Touch.onFingerDown += HandleFingerDown;
+            EnhancedTouch.Touch.onFingerUp += HandleFingerUp;
+        }
 
         void OnDisable()
         {
+            EnhancedTouch.Touch.onFingerDown -= HandleFingerDown;
+            EnhancedTouch.Touch.onFingerUp -= HandleFingerUp;
             if (Active == this)
                 Active = null;
+        }
+
+        bool Showing => Playing && Time.timeScale > 0f && Touchscreen.current != null;
+
+        void HandleFingerDown(EnhancedTouch.Finger finger)
+        {
+            if (!Showing)
+                return;
+            Vector2 position = finger.screenPosition;
+            float height = UnityEngine.Screen.height;
+            if (position.x < UnityEngine.Screen.width * 0.5f)
+                return; // the stick side
+            if (!Simple && Near(dashButton, position, height))
+                dash = true;
+            else
+                action = true;
+        }
+
+        void HandleFingerUp(EnhancedTouch.Finger finger)
+        {
+            // Toddler mode: a quick tap on the stick side also throws.
+            if (!Showing || !Simple)
+                return;
+            EnhancedTouch.Touch touch = finger.lastTouch;
+            Vector2 start = touch.startScreenPosition;
+            if (start.x < UnityEngine.Screen.width * 0.5f && (touch.screenPosition - start).magnitude < UnityEngine.Screen.height * 0.03f)
+                action = true;
         }
 
         public bool ConsumeAction()
@@ -107,31 +144,16 @@ namespace BabyClash
                     continue;
                 int id = touch.touchId.ReadValue();
                 Vector2 position = touch.position.ReadValue();
-                if (phase == TouchPhase.Began)
+                // Taps on the buttons are handled by the finger events above; here only the stick.
+                if (phase == TouchPhase.Began && position.x < UnityEngine.Screen.width * 0.5f && stickTouch < 0)
                 {
-                    if (position.x < UnityEngine.Screen.width * 0.5f && stickTouch < 0)
-                    {
-                        stickTouch = id;
-                        stickOrigin = position;
-                    }
-                    else if (!Simple && Near(dashButton, position, height))
-                    {
-                        dash = true;
-                    }
-                    else if (Simple || position.x >= UnityEngine.Screen.width * 0.5f)
-                    {
-                        action = true;
-                    }
+                    stickTouch = id;
+                    stickOrigin = position;
                 }
                 if (id != stickTouch)
                     continue;
                 if (phase == TouchPhase.Ended || phase == TouchPhase.Canceled)
-                {
-                    // A quick tap on the left also counts as the action in toddler mode.
-                    if (Simple && (position - stickOrigin).magnitude < height * 0.03f)
-                        action = true;
                     continue;
-                }
                 stickHeld = true;
                 Move = Vector2.ClampMagnitude((position - stickOrigin) / (height * StickRadius), 1f);
             }

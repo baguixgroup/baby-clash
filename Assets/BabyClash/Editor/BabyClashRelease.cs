@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using UnityEditor;
+using UnityEditor.Build;
 using UnityEditor.Build.Reporting;
 using UnityEngine;
 
@@ -44,6 +45,74 @@ namespace BabyClash.EditorTools
                 EditorApplication.Exit(1);
         }
 
+        /// <summary>
+        /// Xcode project for iPad (and iPhone). Add -simulator for the iOS Simulator. Open the project in Xcode, pick your
+        /// team under Signing &amp; Capabilities, and run it on a device.
+        /// </summary>
+        public static void BuildIOS()
+        {
+            BuildReport report = Build(BuildTarget.iOS, CommandLinePath(Path.Combine(DefaultFolder, HasArgument("-simulator") ? "iOS-Simulator" : "iOS")));
+            if (report.summary.result != BuildResult.Succeeded)
+                EditorApplication.Exit(1);
+        }
+
+        /// <summary>Android APK (add -aab for a Google Play app bundle). Signed with Unity's debug key unless a keystore is set.</summary>
+        public static void BuildAndroid()
+        {
+            string file = HasArgument("-aab") ? "BabyClash.aab" : "BabyClash.apk";
+            BuildReport report = Build(BuildTarget.Android, CommandLinePath(Path.Combine(DefaultFolder, "Android", file)));
+            if (report.summary.result != BuildResult.Succeeded)
+                EditorApplication.Exit(1);
+        }
+
+        [MenuItem("Baby Clash/Build iPad Xcode Project", priority = 42)]
+        static void BuildIOSFromMenu()
+        {
+            BuildReport report = Build(BuildTarget.iOS, Path.Combine(DefaultFolder, "iOS"));
+            if (report.summary.result == BuildResult.Succeeded)
+                EditorUtility.RevealInFinder(report.summary.outputPath);
+        }
+
+        [MenuItem("Baby Clash/Build Android APK", priority = 43)]
+        static void BuildAndroidFromMenu()
+        {
+            BuildReport report = Build(BuildTarget.Android, Path.Combine(DefaultFolder, "Android", "BabyClash.apk"));
+            if (report.summary.result == BuildResult.Succeeded)
+                EditorUtility.RevealInFinder(report.summary.outputPath);
+        }
+
+        /// <summary>Tablet settings shared by iOS and Android: landscape only, same app id, full screen.</summary>
+        static void ConfigureMobile(BuildTarget target)
+        {
+            const string appId = "com.babyclash.game";
+            PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.iOS, appId);
+            PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Android, appId);
+            PlayerSettings.defaultInterfaceOrientation = UIOrientation.AutoRotation;
+            PlayerSettings.allowedAutorotateToPortrait = false;
+            PlayerSettings.allowedAutorotateToPortraitUpsideDown = false;
+            PlayerSettings.allowedAutorotateToLandscapeLeft = true;
+            PlayerSettings.allowedAutorotateToLandscapeRight = true;
+            PlayerSettings.statusBarHidden = true;
+
+            if (target == BuildTarget.iOS)
+            {
+                PlayerSettings.iOS.targetDevice = iOSTargetDevice.iPhoneAndiPad;
+                PlayerSettings.iOS.targetOSVersionString = "15.0";
+                PlayerSettings.iOS.requiresFullScreen = true;
+                PlayerSettings.iOS.sdkVersion = HasArgument("-simulator") ? iOSSdkVersion.SimulatorSDK : iOSSdkVersion.DeviceSDK;
+                PlayerSettings.SetScriptingBackend(NamedBuildTarget.iOS, ScriptingImplementation.IL2CPP);
+            }
+            else if (target == BuildTarget.Android)
+            {
+                PlayerSettings.SetScriptingBackend(NamedBuildTarget.Android, ScriptingImplementation.IL2CPP);
+                // ARM64: every current phone and tablet, and what Google Play requires (Unity 6.6 dropped x86-64).
+                PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
+                PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel25;
+                PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevelAuto;
+                EditorUserBuildSettings.buildAppBundle = HasArgument("-aab");
+            }
+        }
+
         public static void BuildRaspberryPi()
         {
             string path = CommandLinePath(Path.Combine(DefaultFolder, "RaspberryPi"));
@@ -66,7 +135,13 @@ namespace BabyClash.EditorTools
             {
                 EditorUserBuildSettings.SetPlatformSettings(BuildPipeline.GetBuildTargetName(target), "Architecture", "x64");
             }
+            else if (target == BuildTarget.iOS || target == BuildTarget.Android)
+            {
+                ConfigureMobile(target);
+            }
 
+            // Release unless asked: a stale "Development" tick in the editor would show the developer console on devices.
+            EditorUserBuildSettings.development = HasArgument("-development");
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".");
             var options = new BuildPlayerOptions
             {

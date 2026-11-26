@@ -198,6 +198,19 @@ Feel knobs live on scene components: `Main Camera → ArenaCamera` (framing/shak
     expensive engine and script profiler markers, overall and for each slow frame.
   - The window must stay visible: macOS stops presenting frames for a hidden window or a sleeping display, and the
     player waits for it.
+- **iPad / iPhone**: needs Unity's iOS Build Support module and Xcode. **Baby Clash → Build iPad Xcode Project**, or
+  `Unity -batchmode -quit -projectPath . -buildTarget iOS -executeMethod BabyClash.EditorTools.BabyClashRelease.BuildIOS -buildPath Builds/iOS`
+  (add `-simulator` for the iOS Simulator). Open `Builds/iOS/Unity-iPhone.xcodeproj` in Xcode, choose your team under
+  **Signing & Capabilities** (a free Apple ID works for your own devices; the App Store needs the paid Apple Developer
+  Program), plug in the iPad and press Run. Landscape only, iPad and iPhone, iOS 15+.
+- **Android tablets and phones**: needs Unity's Android Build Support with the SDK, NDK and OpenJDK.
+  **Baby Clash → Build Android APK**, or
+  `Unity -batchmode -quit -projectPath . -buildTarget Android -executeMethod BabyClash.EditorTools.BabyClashRelease.BuildAndroid -buildPath Builds/Android/BabyClash.apk`
+  (add `-aab` for a Google Play bundle). Install with `adb install Builds/Android/BabyClash.apk`, or copy the file to the
+  tablet and open it (allow installs from unknown sources). ARM64, Android 8+, landscape. Signed with Unity's debug key:
+  set a release keystore in **Player Settings → Publishing Settings** before uploading to Google Play.
+- On tablets the menus scale to the screen's shape (`AspectMatch`), keyboard hints are hidden, the game runs at 60 fps and
+  the screen stays awake during matches. Touch buttons react to finger-down events, so even very quick taps count.
 - **Windows installer**: after **Build Windows App**, run `Installer/build-installer.sh`. It packages
   `Builds/Windows` into `Builds/Installer/BabyClash-<version>-Setup.exe`, a setup wizard (Welcome → install folder →
   Finish with "Play now" and "Create a desktop shortcut") that installs to `Program Files`, adds a Start menu entry and
