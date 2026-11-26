@@ -156,6 +156,13 @@ namespace BabyClash.Core
             SetActivity(BabyActivity.Ready);
         }
 
+        /// <summary>Online guests: shows what the host's baby is doing. Timers are left to the host.</summary>
+        public void SetMirrored(BabyActivity activity)
+        {
+            activityTimer = 0f;
+            SetActivity(activity);
+        }
+
         void SetActivity(BabyActivity activity)
         {
             if (activity != BabyActivity.Dashing)

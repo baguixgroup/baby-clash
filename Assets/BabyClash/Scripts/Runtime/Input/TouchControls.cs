@@ -32,6 +32,9 @@ namespace BabyClash
         /// <summary>Shown only during matches with a local human.</summary>
         public bool Playing { get; set; }
 
+        /// <summary>Player slot the touch controls drive (online guests may not be baby 1).</summary>
+        public int Slot { get; set; }
+
         /// <summary>Toddler mode: every tap throws and there is no dash button.</summary>
         public bool Simple { get; set; }
 

@@ -95,7 +95,7 @@ namespace BabyClash
             for (int i = 0; i < items.Length; i++)
             {
                 Throwable item = items[i];
-                if (item == null || !item.isActiveAndEnabled || item.State == ItemState.Held)
+                if (item == null || item.IsPuppet || !item.isActiveAndEnabled || item.State == ItemState.Held)
                 {
                     strandedTime[i] = 0f;
                     continue;
@@ -117,7 +117,7 @@ namespace BabyClash
 
             foreach (BabyController baby in babies)
             {
-                if (baby == null || !baby.isActiveAndEnabled)
+                if (baby == null || !baby.isActiveAndEnabled || baby.IsPuppet)
                     continue;
 
                 Vector3 position = baby.transform.position;

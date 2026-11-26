@@ -108,7 +108,7 @@ namespace BabyClash
 
             Vector2 move = moveAction.ReadValue<Vector2>();
             TouchControls touch = TouchControls.Active;
-            if (touch != null && controller.PlayerIndex == 0)
+            if (touch != null && controller.PlayerIndex == touch.Slot)
             {
                 if (touch.Move.sqrMagnitude > move.sqrMagnitude)
                     move = touch.Move;

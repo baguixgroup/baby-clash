@@ -34,9 +34,14 @@ namespace BabyClash
         /// <summary>1 = normal floor, lower = slippery (slower to speed up, stop and turn). Set by rooms.</summary>
         public float Grip { get; set; } = 1f;
 
+        /// <summary>Online guests: the host moves this baby; it only follows <see cref="ShowPose"/>.</summary>
+        public bool IsPuppet { get; private set; }
+
+        Vector3 puppetVelocity;
+
         /// <summary>Normalized horizontal facing direction. Throws go this way (plus aim assist).</summary>
         public Vector3 Facing => facing;
-        public Vector3 Velocity => body != null ? body.linearVelocity : Vector3.zero;
+        public Vector3 Velocity => IsPuppet ? puppetVelocity : body != null ? body.linearVelocity : Vector3.zero;
         public Vector2 MoveInput => moveInput;
         public MovementMode Mode => mode;
 
@@ -73,6 +78,34 @@ namespace BabyClash
 
         public void SetMoveInput(Vector2 input) => moveInput = Vector2.ClampMagnitude(input, 1f);
 
+        public void SetPuppet(bool puppet)
+        {
+            if (body == null)
+                body = GetComponent<Rigidbody>();
+            IsPuppet = puppet;
+            puppetVelocity = Vector3.zero;
+            if (puppet)
+            {
+                if (!body.isKinematic)
+                    body.linearVelocity = Vector3.zero;
+                body.isKinematic = true;
+            }
+            else
+            {
+                body.isKinematic = false;
+            }
+            body.detectCollisions = !puppet;
+            body.interpolation = puppet ? RigidbodyInterpolation.None : RigidbodyInterpolation.Interpolate;
+        }
+
+        /// <summary>Puppets: where the host says the baby is.</summary>
+        public void ShowPose(Vector3 position, Quaternion rotation, Vector3 velocity)
+        {
+            puppetVelocity = velocity;
+            transform.SetPositionAndRotation(position, rotation);
+            facing = Flatten(rotation * Vector3.forward, facing);
+        }
+
         public void SetMode(MovementMode movementMode, float multiplier)
         {
             mode = movementMode;
@@ -81,6 +114,8 @@ namespace BabyClash
 
         public void BeginDash(Vector3 velocity)
         {
+            if (IsPuppet)
+                return;
             FaceInstantly(velocity);
             Vector3 v = body.linearVelocity;
             body.linearVelocity = new Vector3(velocity.x, v.y, velocity.z);
@@ -90,6 +125,8 @@ namespace BabyClash
         /// <summary>Replaces the horizontal velocity (predictable, doesn't stack with running speed) and adds a hop.</summary>
         public void ApplyKnockback(Vector3 horizontalVelocity, float lift)
         {
+            if (IsPuppet)
+                return;
             Vector3 v = body.linearVelocity;
             body.linearVelocity = new Vector3(horizontalVelocity.x, Mathf.Max(v.y, lift), horizontalVelocity.z);
         }
@@ -97,6 +134,8 @@ namespace BabyClash
         /// <summary>Pushes the baby along the floor (sprinklers, vacuums) on top of whatever it is doing.</summary>
         public void Push(Vector3 velocityChange)
         {
+            if (IsPuppet)
+                return;
             velocityChange.y = 0f;
             body.linearVelocity += velocityChange;
         }
@@ -109,15 +148,20 @@ namespace BabyClash
 
             facing = direction.normalized;
             Quaternion rotation = Quaternion.LookRotation(facing, Vector3.up);
-            body.rotation = rotation;
+            if (!IsPuppet)
+                body.rotation = rotation;
             transform.rotation = rotation;
         }
 
         public void Teleport(Vector3 position, Quaternion rotation)
         {
             moveInput = Vector2.zero;
-            body.linearVelocity = Vector3.zero;
-            body.angularVelocity = Vector3.zero;
+            puppetVelocity = Vector3.zero;
+            if (!body.isKinematic)
+            {
+                body.linearVelocity = Vector3.zero;
+                body.angularVelocity = Vector3.zero;
+            }
             body.position = position;
             body.rotation = rotation;
             transform.SetPositionAndRotation(position, rotation);
@@ -126,7 +170,7 @@ namespace BabyClash
 
         void FixedUpdate()
         {
-            if (config == null)
+            if (config == null || IsPuppet)
                 return;
 
             float dt = Time.fixedDeltaTime;

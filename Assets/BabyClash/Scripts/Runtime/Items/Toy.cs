@@ -68,9 +68,14 @@ namespace BabyClash
 
         protected override void OnHeld() => SetVisible(true);
 
+        /// <summary>Online guests: the host decides when toys blink and disappear.</summary>
+        public void ShowRemoteVisible(bool show) => SetVisible(show);
+
+        public bool IsVisible => visible;
+
         void Update()
         {
-            if (State != ItemState.Loose)
+            if (State != ItemState.Loose || IsPuppet)
                 return;
 
             lifetime -= Time.deltaTime;

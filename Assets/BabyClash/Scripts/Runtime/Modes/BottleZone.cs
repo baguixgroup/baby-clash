@@ -24,6 +24,12 @@ namespace BabyClash
 
         public BabyController Holder { get; private set; }
 
+        /// <summary>Which of the fixed spots the bottle is heading to.</summary>
+        public int Spot => spot;
+
+        /// <summary>Online guests: the host decides when the bottle moves.</summary>
+        public void ShowRemoteSpot(int value) => spot = Mathf.Clamp(value, 0, spots.Length - 1);
+
         public static BottleZone Create(RoundManager manager)
         {
             var zone = new GameObject("BottleZone").AddComponent<BottleZone>();
@@ -87,7 +93,8 @@ namespace BabyClash
                 if (Holder != null && !contested)
                     round.AddScore(Holder, PointsPerSecond * Time.deltaTime);
 
-                moveTimer -= Time.deltaTime;
+                if (!round.IsMirror)
+                    moveTimer -= Time.deltaTime;
                 if (moveTimer <= 0f)
                 {
                     moveTimer = MoveEvery;
@@ -138,9 +145,19 @@ namespace BabyClash
             round.PhaseChanged -= HandlePhase;
         }
 
-        bool Running => round != null && round.Mode == GameMode.Survival && round.Phase == RoundPhase.Playing;
+        bool Running => round != null && !round.IsMirror && round.Mode == GameMode.Survival && round.Phase == RoundPhase.Playing;
+
+        /// <summary>Online guests: shows the host's wave and score.</summary>
+        public void ShowRemote(int wave, int knockouts)
+        {
+            bool newWave = wave > Wave && Wave > 0;
+            Wave = wave;
+            Knockouts = knockouts;
+            if (newWave)
+                WaveStarted?.Invoke(wave);
+        }
         int Goal => 2 + Wave;
-        bool IsHuman(BabyController baby) => round.Setup != null && round.Setup.IsHuman(baby.PlayerIndex);
+        bool IsHuman(BabyController baby) => round.Setup != null && round.Setup.IsPerson(baby.PlayerIndex);
 
         void HandlePhase(RoundPhase phase)
         {
@@ -148,6 +165,8 @@ namespace BabyClash
                 return;
             Wave = 1;
             Knockouts = knockoutsThisWave = 0;
+            if (round.IsMirror)
+                return;
             for (int i = 0; i < returnTimers.Length; i++)
                 returnTimers[i] = -1f;
             ApplyWave(true);

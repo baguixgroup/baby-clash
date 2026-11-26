@@ -60,6 +60,16 @@ namespace BabyClash.Core
             Changed?.Invoke(Value);
         }
 
+        /// <summary>Online guests: shows the host's value. Never raises <see cref="Filled"/> (the host decides crying).</summary>
+        public void SetMirrored(float value)
+        {
+            value = Math.Max(0f, Math.Min(Max, value));
+            if (Math.Abs(value - Value) < 0.0001f)
+                return;
+            Value = value;
+            Changed?.Invoke(Value);
+        }
+
         public void Reset()
         {
             Value = 0f;

@@ -11,6 +11,9 @@ namespace BabyClash
         CpuEasy,
         CpuNormal,
         CpuHard,
+
+        /// <summary>A person playing on another device (online). Never cycled to in local menus.</summary>
+        Online,
     }
 
     /// <summary>Everything that defines one match: mode, room, players, teams and rules.</summary>
@@ -49,6 +52,14 @@ namespace BabyClash
         public bool IsPlaying(int slot) => slot >= 0 && slot < Slots.Length && Slots[slot] != SlotDriver.Off;
         public bool IsHuman(int slot) => slot >= 0 && slot < Slots.Length && Slots[slot] == SlotDriver.Human;
 
+        /// <summary>A baby played by someone on another device.</summary>
+        public bool IsOnline(int slot) => slot >= 0 && slot < Slots.Length && Slots[slot] == SlotDriver.Online;
+
+        /// <summary>A real person, here or online.</summary>
+        public bool IsPerson(int slot) => IsHuman(slot) || IsOnline(slot);
+
+        public bool IsCpu(int slot) => IsPlaying(slot) && !IsPerson(slot);
+
         public int Count(bool humansOnly)
         {
             int count = 0;
@@ -70,7 +81,7 @@ namespace BabyClash
                 if (!IsPlaying(i))
                     continue;
                 if (Mode == GameMode.Survival)
-                    sides.Add(IsHuman(i) ? 0 : 1);
+                    sides.Add(IsPerson(i) ? 0 : 1);
                 else
                     sides.Add(Teams ? next % 2 : next);
                 next++;

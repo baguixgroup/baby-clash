@@ -79,7 +79,33 @@ Players 3 and 4 use gamepads. Everything above is built at runtime by `GameFlow.
 Automated runs: `-smoketest <dir>` plus `-mode <Mode> -room <Room> -players N [-teams 1]`, `-level <id>`, `-screens 1`
 (photographs the menus) or `-touch 1` (simulated finger). They use a throwaway profile and never touch the save.
 
-Online play is not implemented yet.
+## Online play
+
+**PLAY ONLINE** on the title screen: **Quick Match** (joins any public room with space, or opens one that starts by
+itself 20 seconds after a second player arrives), **Make a room for friends** (private, joined with the 6-letter
+code shown in the room), or **Join a friend's room** (type the code with the on-screen keypad, a keyboard or a
+gamepad). Up to 4 babies; the host picks the mode, room, power-ups, teams and CPU babies for free slots. Players who
+join mid-match watch it and play the next one; if someone leaves mid-match, a CPU takes over their baby.
+
+Kid-safe by design: anonymous sign-in, no names (players show as YOU / FRIEND), no chat, only four emotes
+(HI!, HEE HEE!, WAAAH!, GOOD GAME! on the 1-4 keys, the gamepad d-pad or the buttons on the right).
+
+How it works (`Scripts/Runtime/Net`):
+- `NetSession`: Unity Gaming Services sign-in and the Lobby + Relay **session** (`com.unity.services.multiplayer`),
+  which starts Netcode for GameObjects (`com.unity.netcode.gameobjects`) as host or client. A direct IP mode is
+  there for tests and local networks.
+- `NetGame`: the host runs the real match. 30 times a second it sends guests a snapshot (babies, items, power-ups,
+  bottle, vacuum, round clock and scores) plus the events that happened (hits, throws, tears...), stamped with the
+  host clock. Guests show the match 0.11 s behind, smoothing between snapshots and replaying events on time, so
+  animation, sound and HUD work as offline. Babies and items on guests are *puppets* (`IsPuppet`): no physics or rules.
+  A guest's stick and buttons go to the host (press counters, so a lost packet never loses a throw).
+- `OnlineMenus`: the online screens and emote buttons. Messages and formats: `NetWire` (bump `Version` on changes).
+- The project is linked to Unity Cloud (`ProjectSettings` → Services) with Relay and Lobby; free tiers apply.
+
+Test two copies against each other: start one with `-netTest host -netOut DIR -netDirect 7777` (or `-netRelay`,
+which writes the room code to `DIR/code.txt`) and another with `-netTest join -netOut DIR2 -netDirect 127.0.0.1:7777`
+(or `-netCodeFile DIR/code.txt`). Add `-netProfile <name>` to give each copy its own anonymous player. Options for the
+host: `-netGuests N -netMode Survival -netRoom Bath -netCpus 1 -netSeconds 120`. Each writes `net.log` and screenshots.
 
 ## Architecture
 
@@ -149,7 +175,7 @@ Feel knobs live on scene components: `Main Camera → ArenaCamera` (framing/shak
 - **EditMode, 63 tests**: Cry Meter, damage/knockback, item ownership (throw → hit once → land → opponent picks
   up the same item → throws it back), dash and dodge windows, stun, crying, rounds, the round clock, best-of-3,
   time-up decisions.
-- **PlayMode, 18 tests** with real physics: babies start protected; throwing removes protection and the diaper
+- **PlayMode, 19 tests** with real physics: babies start protected; throwing removes protection and the diaper
   lands; it hits the opponent; diaperless babies re-equip and throw back; a wearing baby can't grab a second diaper;
   toys are grabbed without losing the diaper, hit, and vanish; dashing dodges throws; dashing into a baby shoves it
   and knocks its toy loose; diaper-before-toy priority; knockouts end rounds and the next round resets everything;
@@ -197,7 +223,9 @@ Feel knobs live on scene components: `Main Camera → ArenaCamera` (framing/shak
 - Babies differ only in looks (no character traits yet).
 - The UI font is Unity's built-in one. A rounder, playful font (e.g. an OFL-licensed one) would suit the game
   better and is a one-line swap in `UiFactory`.
-- No online play, rebinding screen, localisation, save data beyond volume settings, or achievements.
+- No rebinding screen, localisation or achievements.
+- Online: guests see the match about 0.1 s plus their connection's delay behind (no prediction of their own baby),
+  so very laggy connections feel sluggish. Host migration isn't set up: if the host leaves, the room closes.
 - Gamepads are assigned by connection order.
 - The scene and prefabs are generated: hand edits to them are lost on **Rebuild Game Content**. Balance assets are
   safe. To hand-author content, stop regenerating (or change the factories).
