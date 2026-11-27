@@ -10,6 +10,15 @@ exposed until someone (maybe your opponent) picks it back up.
 Everything you see and hear (characters, nursery, UI art, icons, music, sound effects) is generated from code
 inside this project. There are no third-party assets and no licensing to worry about.
 
+## Download
+
+- **Android phones and tablets**: [test build 8981f2a](https://github.com/baguixgroup/baby-clash/releases/tag/android-8981f2a).
+  Download the APK on the device and open it. Android 8+ on 64-bit ARM; debug-signed test build. Newer builds appear
+  on the [releases page](https://github.com/baguixgroup/baby-clash/releases).
+- **Windows and Raspberry Pi**: see [Installers/README.md](Installers/README.md).
+
+The repository is private, so downloads need access to it.
+
 ---
 
 ## Requirements
