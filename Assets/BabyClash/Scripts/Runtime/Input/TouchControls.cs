@@ -144,11 +144,18 @@ namespace BabyClash
                     continue;
                 int id = touch.touchId.ReadValue();
                 Vector2 position = touch.position.ReadValue();
-                // Taps on the buttons are handled by the finger events above; here only the stick.
-                if (phase == TouchPhase.Began && position.x < UnityEngine.Screen.width * 0.5f && stickTouch < 0)
+                // Taps on the buttons are handled by the finger events above; here only the stick. Any finger that
+                // went down on the left half takes the free stick, not only one caught on its first frame: a finger
+                // still held when the controls reappear, or a second finger once the first lifts, can steer too.
+                bool down = phase != TouchPhase.Ended && phase != TouchPhase.Canceled;
+                if (stickTouch < 0 && down)
                 {
-                    stickTouch = id;
-                    stickOrigin = position;
+                    Vector2 start = touch.startPosition.ReadValue();
+                    if (start.x < UnityEngine.Screen.width * 0.5f)
+                    {
+                        stickTouch = id;
+                        stickOrigin = start;
+                    }
                 }
                 if (id != stickTouch)
                     continue;
